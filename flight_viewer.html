@@ -1,0 +1,3471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flight Viewer</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.33/dist.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<!-- Optional: coord->IANA timezone lookup for proper DST. If offline /
+     blocked, the viewer falls back to a lon-only UTC offset. -->
+<script src="https://unpkg.com/tz-lookup@6.1.25/tz.js" defer></script>
+<style>
+  :root {
+    --bg-deep:  #0b0f17;
+    --bg-pane:  rgba(18, 22, 30, 0.85);
+    --bg-pane-strong: rgba(18, 22, 30, 0.96);
+    --bd:       rgba(255, 255, 255, 0.08);
+    --bd-2:     rgba(255, 255, 255, 0.14);
+    --fg:       #e7eaf0;
+    --fg-dim:   #9aa3b2;
+    --fg-mute:  #6b7280;
+    --accent:   #3b82f6;
+    --accent-2: #60a5fa;
+    --good:     #10b981;
+    --warn:     #f59e0b;
+    --bad:      #ef4444;
+    --radius:   10px;
+    --shadow:   0 10px 30px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.35);
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: var(--bg-deep);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  button { font-family: inherit; }
+
+  /* ---------- Landing screen (shown until first flight loaded) ---------- */
+  #landing {
+    position: fixed; inset: 0; z-index: 200;
+    background: radial-gradient(ellipse at top, #1a2236 0%, var(--bg-deep) 60%);
+    display: grid; place-items: center; padding: 24px;
+    transition: opacity 240ms ease;
+  }
+  #landing.hidden { opacity: 0; pointer-events: none; }
+  #landingCard {
+    width: 100%; max-width: 520px;
+    background: rgba(20, 26, 38, 0.85);
+    border: 1px solid var(--bd-2); border-radius: 16px;
+    padding: 36px 40px 32px; box-shadow: var(--shadow);
+    text-align: center;
+    backdrop-filter: blur(14px);
+  }
+  #landingCard .hero { margin-bottom: 26px; }
+  #landingCard .hero svg { width: 44px; height: 44px; color: var(--accent-2); }
+  #landingCard h1 {
+    margin: 12px 0 6px; font-size: 22px; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  #landingCard .sub { color: var(--fg-dim); font-size: 13px; margin: 0; }
+  #landingDrop {
+    border: 2px dashed var(--bd-2); border-radius: 12px;
+    padding: 32px 24px; transition: all 160ms ease;
+    background: rgba(255,255,255,0.015);
+  }
+  #landingDrop.hover {
+    border-color: var(--accent-2); background: rgba(59,130,246,0.08);
+  }
+  #landingDrop .big {
+    font-size: 16px; font-weight: 500; margin-bottom: 4px; color: var(--fg);
+  }
+  #landingDrop .or {
+    color: var(--fg-mute); font-size: 11px; margin: 12px 0;
+    text-transform: uppercase; letter-spacing: 0.12em;
+  }
+  .btn-primary {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 10px 22px; font-size: 14px;
+    font-weight: 500; cursor: pointer;
+    transition: background 120ms, transform 80ms;
+  }
+  .btn-primary:hover { background: var(--accent-2); transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+  #landingDrop .formats {
+    color: var(--fg-mute); font-size: 11px; margin-top: 14px;
+  }
+  #landingDrop .formats code {
+    background: rgba(255,255,255,0.05); padding: 1px 6px;
+    border-radius: 4px; margin: 0 2px; color: var(--fg-dim);
+  }
+
+  /* ---------- App shell ---------- */
+  #app { position: fixed; inset: 0; }
+  #map { position: absolute; inset: 0; }
+  #mapContainer { width: 100%; height: 100%; background: #0a1226; }
+  .maplibregl-ctrl-attrib { font-size: 10px; }
+  .maplibregl-ctrl-group {
+    border-radius: 8px !important;
+    box-shadow: var(--shadow) !important;
+    overflow: hidden;
+  }
+  /* Keep +/- zoom, compass, fullscreen above the map canvas / deck overlay. */
+  .maplibregl-control-container {
+    z-index: 40 !important;
+    pointer-events: none;
+  }
+  .maplibregl-control-container .maplibregl-ctrl {
+    pointer-events: auto;
+  }
+
+  /* Settings gear */
+  #settingsFab {
+    position: absolute; top: 12px; left: 12px; z-index: 20;
+    width: 40px; height: 40px; border-radius: 10px;
+    background: var(--bg-pane-strong); color: var(--accent-2);
+    border: 1px solid var(--bd-2); font-size: 18px; line-height: 1;
+    cursor: pointer; display: grid; place-items: center;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: transform 120ms ease, background 120ms ease;
+  }
+  #settingsFab:hover { transform: translateY(-1px); background: rgba(28,32,42,0.96); }
+
+  /* Settings drawer */
+  #settings {
+    position: absolute; top: 12px; left: 62px; z-index: 19;
+    width: 320px; max-height: calc(100% - 90px); overflow-y: auto;
+    background: var(--bg-pane-strong); border: 1px solid var(--bd);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    transform-origin: top left;
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+  #settings.hidden {
+    opacity: 0; transform: scale(0.96) translateX(-8px); pointer-events: none;
+  }
+  #settings header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid var(--bd);
+    font-weight: 600; color: var(--fg);
+  }
+  #settings .body { padding: 12px 14px; display: grid; gap: 12px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 10px;
+         align-items: center; }
+  .row > .lbl { color: var(--fg-dim); font-size: 12px; }
+  .row > .ctl { display: flex; align-items: center; gap: 6px; }
+  select, input[type="number"] {
+    background: rgba(255,255,255,0.04);
+    color: var(--fg); border: 1px solid var(--bd-2);
+    border-radius: 6px; padding: 5px 8px; font-size: 12px;
+    transition: border-color 120ms;
+  }
+  select:focus, input[type="number"]:focus, input[type="range"]:focus {
+    outline: none; border-color: var(--accent);
+  }
+  input[type="range"] { accent-color: var(--accent); height: 4px; cursor: pointer; }
+  input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; }
+  .toggle { display: inline-flex; background: rgba(255,255,255,0.04);
+            border: 1px solid var(--bd-2); border-radius: 7px; overflow: hidden; }
+  .toggle button { background: transparent; color: var(--fg-dim); border: none;
+                   padding: 5px 11px; cursor: pointer; font-size: 12px;
+                   transition: background 100ms, color 100ms; }
+  .toggle button:hover { color: var(--fg); background: rgba(255,255,255,0.04); }
+  .toggle button.active { background: var(--accent); color: #fff; }
+  .iconbtn {
+    background: transparent; color: var(--fg-dim); border: none;
+    width: 28px; height: 28px; border-radius: 6px; cursor: pointer;
+    font-size: 18px; line-height: 1; display: grid; place-items: center;
+    transition: background 120ms, color 120ms;
+  }
+  .iconbtn:hover { background: rgba(255,255,255,0.07); color: var(--fg); }
+
+  /* Live HUD */
+  #hud {
+    position: absolute; right: 12px; bottom: 88px; z-index: 18;
+    background: var(--bg-pane-strong); border: 1px solid var(--bd);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    min-width: 230px; touch-action: none;
+  }
+  #hud header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-bottom: 1px solid var(--bd);
+    font-size: 12px; font-weight: 600; color: var(--fg-dim);
+    cursor: move; user-select: none; letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  #hud header .grip { color: var(--fg-mute); font-size: 14px; }
+  #hud .body { padding: 10px 12px; display: grid; gap: 4px;
+               font-family: ui-monospace, "SF Mono", Menlo, monospace;
+               font-size: 12px; }
+  #hud .body .row2 { display: flex; justify-content: space-between; gap: 12px; }
+  #hud .k { color: var(--fg-mute); }
+  #hud .v { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* Bottom transport bar */
+  #bottomBar {
+    position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 17;
+    display: grid; grid-template-columns: auto auto 1fr; gap: 14px;
+    align-items: center;
+    background: var(--bg-pane-strong); border: 1px solid var(--bd);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 10px 14px;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  }
+  #bottomBar .group { display: flex; align-items: center; gap: 6px; }
+  .tbtn {
+    background: rgba(255,255,255,0.04);
+    color: var(--fg); border: 1px solid var(--bd-2);
+    border-radius: 7px; cursor: pointer;
+    width: 34px; height: 34px; display: grid; place-items: center;
+    font-size: 14px; line-height: 1;
+    transition: background 100ms, color 100ms, border-color 100ms;
+  }
+  .tbtn:hover { background: rgba(255,255,255,0.09); }
+  .tbtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tbtn.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+    width: 38px; height: 38px; font-size: 16px;
+  }
+  .tbtn.primary:hover { background: var(--accent-2); }
+  .tbtn svg { width: 16px; height: 16px; }
+  #speedCtl {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--bd-2); border-radius: 7px;
+    padding: 4px 10px; height: 32px; box-sizing: border-box;
+    cursor: ew-resize;
+  }
+  #speedSlider { width: 100px; height: 4px; cursor: ew-resize; }
+  #speedV {
+    font-size: 12px; color: var(--fg);
+    min-width: 48px; text-align: right;
+    font-variant-numeric: tabular-nums; user-select: none;
+    cursor: pointer;
+  }
+  #progressGroup { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  #progressGroup .t { font-family: ui-monospace, Menlo, monospace;
+                       font-size: 11px; color: var(--fg-dim);
+                       min-width: 46px; text-align: center;
+                       font-variant-numeric: tabular-nums; }
+  #progress { flex: 1; cursor: pointer; height: 5px; min-width: 0; accent-color: var(--accent); }
+
+  /* Chart -- explicit width so CSS resize:both has something to grab. */
+  #chartPanel {
+    position: absolute; left: 12px; bottom: 74px; z-index: 15;
+    width: 50vw;
+    height: 230px;
+    min-width: 320px; min-height: 80px;
+    max-width: calc(100vw - 24px); max-height: calc(100vh - 120px);
+    background: var(--bg-pane-strong); border: 1px solid var(--bd);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    transform: translateY(calc(100% + 90px));
+    transition: transform 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    overflow: hidden;
+    resize: both;
+  }
+  #chartPanel.open { transform: translateY(0); }
+  #chartPanel .head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 12px; border-bottom: 1px solid var(--bd);
+    font-size: 11px; color: var(--fg-dim); letter-spacing: 0.04em;
+    text-transform: uppercase; font-weight: 600;
+    cursor: move; user-select: none;
+  }
+  #chart { width: 100%; height: calc(100% - 28px); }
+
+  /* Status pill */
+  #status {
+    position: absolute; right: 12px; top: 12px; z-index: 16;
+    background: var(--bg-pane); color: var(--fg-dim);
+    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--bd);
+    font-size: 11px; pointer-events: none;
+    transition: opacity 400ms ease;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  #status.err { color: var(--bad); border-color: rgba(239,68,68,0.4); }
+  #status.hidden { opacity: 0; }
+
+  /* Drop overlay (after first load, replaces flight) */
+  #dropOverlay {
+    position: absolute; inset: 12px; z-index: 100;
+    border: 3px dashed var(--accent-2);
+    border-radius: 18px; background: rgba(15,23,42,0.78);
+    display: none; place-items: center;
+    color: var(--accent-2); font-size: 22px; font-weight: 600;
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+  }
+  #dropOverlay.active { display: grid; }
+  #dropOverlay .sub { font-size: 13px; color: var(--fg-dim);
+                       font-weight: 400; margin-top: 6px; }
+
+  #fileInput { display: none; }
+  .modebar-container { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- Landing screen                                                 -->
+<!-- ============================================================ -->
+<div id="landing">
+  <div id="landingCard">
+    <div class="hero">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/>
+      </svg>
+      <h1>Flight Viewer</h1>
+      <p class="sub">3D paragliding &amp; hang-gliding track playback</p>
+    </div>
+    <div id="landingDrop">
+      <div class="big">Drop a flight file here</div>
+      <div class="or">&mdash; or &mdash;</div>
+      <button id="openBtn" class="btn-primary">Open file&hellip;</button>
+      <div class="formats">
+        Supports <code>.igc</code> <code>.gpx</code> <code>.kml</code>
+      </div>
+    </div>
+  </div>
+</div>
+<input type="file" id="fileInput" accept=".igc,.gpx,.kml,.IGC,.GPX,.KML">
+
+<!-- ============================================================ -->
+<!-- Map app (hidden until a flight is loaded)                      -->
+<!-- ============================================================ -->
+<div id="app" style="display:none">
+  <div id="map">
+    <div id="mapContainer"></div>
+
+    <button id="settingsFab" title="Settings (S)">&#x2699;</button>
+
+    <div id="settings" class="hidden">
+      <header>
+        <span>Settings</span>
+        <button id="closeSettings" class="iconbtn" title="Close">&times;</button>
+      </header>
+      <div class="body">
+        <div class="row">
+          <span class="lbl">Altitude source</span>
+          <div class="ctl">
+            <div class="toggle" id="altSrc">
+              <button data-v="gps">GPS</button>
+              <button data-v="baro">Baro</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl">Basemap</span>
+          <div class="ctl">
+            <div class="toggle" id="base">
+              <button data-v="sat">Satellite</button>
+              <button data-v="osm">OSM</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl">Units</span>
+          <div class="ctl">
+            <div class="toggle" id="units">
+              <button data-v="metric">Metric</button>
+              <button data-v="imperial">Imperial</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl">Terrain exag.</span>
+          <div class="ctl">
+            <input type="range" id="exag" min="1" max="3" step="0.1" value="1" data-default="1" style="width:120px">
+            <span id="exagV" style="min-width:36px;color:var(--fg-dim);font-variant-numeric:tabular-nums">1.0&times;</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Add metres to every track altitude. Lets you line up takeoff/landing with the DEM ground line in the chart -- GPS uses the WGS84 ellipsoid while the DEM uses MSL/EGM96, so a constant offset of ~30-60 m is normal. Also useful when baro is mis-calibrated and the track sits below ground.">Alt offset</span>
+          <div class="ctl">
+            <input type="range" id="altOffset" min="-500" max="500" step="1" value="0" data-default="0" style="width:75px">
+            <input type="number" id="altOffsetN" value="0" step="1" data-default="0" style="width:52px">
+            <button id="autoAlignBtn" class="tbtn" title="Auto-align track altitude with DEM ground elevation" style="width:auto;height:24px;padding:0 8px;font-size:11px">Auto</button>
+            <span style="color:var(--fg-mute)">m</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl">Track width</span>
+          <div class="ctl">
+            <input type="range" id="trackW" min="1" max="20" step="1" value="2" data-default="2" style="width:120px">
+            <span id="trackWV" style="min-width:36px;color:var(--fg-dim)">2 px</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Adds a world-space ribbon (meters) on top of the pixel line for a 3D volumetric look. 0 = off.">3D thickness</span>
+          <div class="ctl">
+            <input type="range" id="tube3d" min="0" max="20" step="0.5" value="0" data-default="0" style="width:120px">
+            <span id="tube3dV" style="min-width:44px;color:var(--fg-dim)">off</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Cubic Hermite spline through every recorded fix. The original sample coordinates are NEVER moved -- only the lines between fixes become smooth curves. The value is how many sub-segments to insert per fix-to-fix segment. 0 = raw chord polyline (off).">Smoothing</span>
+          <div class="ctl">
+            <input type="range" id="smoothSubdiv" min="0" max="20" step="1" value="6" data-default="6" style="width:120px">
+            <span id="smoothSubdivV" style="min-width:44px;color:var(--fg-dim)">6 / seg</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="How aggressively the spline bows in the middle of each fix-to-fix segment. 1.0 = standard Catmull-Rom (mostly straight in the middle, sharp turn at each fix). Higher = curvature is spread out across the whole segment for a more natural arc. 0 = linear chords.">Curve strength</span>
+          <div class="ctl">
+            <input type="range" id="smoothTension" min="0" max="3" step="0.1" value="1.0" data-default="1.0" style="width:120px">
+            <span id="smoothTensionV" style="min-width:44px;color:var(--fg-dim)">1.0&times;</span>
+          </div>
+        </div>
+
+        <div class="row" id="rowKmlRate" style="display:none">
+          <span class="lbl" title="Synthesized sampling rate for plain KML (LineString) files that lack timestamps. Adjust this if your KML flight plays too fast or too slow.">KML sample rate</span>
+          <div class="ctl">
+            <input type="range" id="kmlRateHz" min="1" max="10" step="1" value="4" data-default="4" style="width:120px">
+            <span id="kmlRateHzV" style="min-width:44px;color:var(--fg-dim)">4 Hz</span>
+          </div>
+        </div>
+
+        <div class="row" style="border-top:1px solid var(--bd);padding-top:8px;margin-top:4px">
+          <span class="lbl" title="MODEL OVERLAY. 1 Hz GPS cannot resolve rotation faster than 0.5 turns/s (Nyquist). This layer passes the helix through every original fix and uses each fix's locally-observed orbit center, radius, and altitude -- so a tightening / accelerating spiral renders as such, not as a perfect cylinder. The user-chosen turns/sec only fixes how many hidden full turns lie between adjacent fixes.">Spiral reconstruction</span>
+          <div class="ctl">
+            <div class="toggle" id="spiralRecon">
+              <button data-v="off">Off</button>
+              <button data-v="on">On</button>
+            </div>
+          </div>
+        </div>
+        <div class="row" id="rowSpiralMode" style="display:none">
+          <span class="lbl">Mode</span>
+          <div class="ctl">
+            <div class="toggle" id="spiralMode">
+              <button data-v="auto">Auto</button>
+              <button data-v="manual">Manual</button>
+            </div>
+          </div>
+        </div>
+        <div class="row" id="rowSpiralTPS" style="display:none">
+          <span class="lbl" title="USER PRIOR on real rotation rate. Per pair of adjacent 1 Hz fixes, real rotation = (visible angular drift in data) + n * 360 deg, with the integer n chosen to minimise |actual - prior|. The actual rendered rate snaps to one of these discrete options, so it can differ from this slider value (shown next to the slider as &quot;actual X t/s&quot; once a segment is found). PHYSICS BOUND: tangential speed v = omega * r. A paraglider in a spiral cannot exceed ~25 m/s without exceeding wing G-limit and bank > 80 deg, so for any orbit radius r >= 5 m the maximum physically valid omega is roughly 5 rad/s (~0.8 t/s). Default 0.30 t/s picks n=0 (no hidden full turns); raise it only if you have evidence the wing was rotating faster than the visible drift.">Turns / sec</span>
+          <div class="ctl">
+            <input type="range" id="spiralTPS" min="0.3" max="3.0" step="0.05" value="0.30" data-default="0.30" style="width:120px">
+            <span id="spiralTPSV" style="min-width:54px;color:var(--fg-dim)">0.30 t/s</span>
+          </div>
+        </div>
+        <div class="row" id="rowSpiralThr" style="display:none">
+          <span class="lbl" title="Auto-detection threshold: a continuous run of |heading change| above this rate (for at least 3 s) is treated as a spiral.">Detect &gt;</span>
+          <div class="ctl">
+            <input type="range" id="spiralThr" min="20" max="180" step="5" value="60" data-default="60" style="width:120px">
+            <span id="spiralThrV" style="min-width:60px;color:var(--fg-dim)">60&deg;/s</span>
+          </div>
+        </div>
+        <div class="row" id="rowSpiralManual" style="display:none">
+          <span class="lbl" title="Manual time window. Use the playback controls to scrub to the moment, then click each button.">Range</span>
+          <div class="ctl" style="flex-direction:column;align-items:flex-start;gap:3px">
+            <div style="display:flex;gap:6px;align-items:center">
+              <button id="spiralSetStart" class="tbtn" style="padding:2px 8px;font-size:11px">Set start &leftarrow; now</button>
+              <span id="spiralStartV" style="color:var(--fg-dim);font-size:11px">--:--:--</span>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <button id="spiralSetEnd" class="tbtn" style="padding:2px 8px;font-size:11px">Set end &leftarrow; now</button>
+              <span id="spiralEndV" style="color:var(--fg-dim);font-size:11px">--:--:--</span>
+            </div>
+            <button id="spiralClear" class="tbtn" style="padding:2px 8px;font-size:11px;color:var(--fg-mute)">Clear range</button>
+          </div>
+        </div>
+        <div class="row" id="rowSpiralStatus" style="display:none">
+          <span class="lbl" style="font-size:11px;color:var(--fg-mute)">Status</span>
+          <span id="spiralStatus" style="font-size:11px;color:#ff9028">&mdash;</span>
+        </div>
+
+        <div class="row">
+          <span class="lbl" title="Past track fades to transparent over this many seconds behind the pilot. Drag to 0 for &quot;off&quot; (no fade). Max stretches to the full flight duration when a track loads; step auto-scales to ~10% of the current value.">Track fade</span>
+          <div class="ctl">
+            <input type="range" id="trailFade" min="0" max="600" step="10" value="0" data-default="0" style="width:120px">
+            <span id="trailFadeV" style="min-width:44px;color:var(--fg-dim)">off</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl">Track color</span>
+          <div class="ctl">
+            <div class="toggle" id="colorMode">
+              <button data-v="vario">Vario</button>
+              <button data-v="single">Single</button>
+            </div>
+          </div>
+        </div>
+        <div class="row" id="rowMaxUp">
+          <span class="lbl" title="Climb rate at which the track turns full red">Max climb</span>
+          <div class="ctl">
+            <input type="range" id="maxUp" min="0.5" max="30" step="0.5" value="2" data-default="2" style="width:90px">
+            <input type="number" id="maxUpN" value="2" step="0.5" min="0.1" data-default="2" style="width:54px">
+            <span style="color:var(--fg-mute)">m/s</span>
+          </div>
+        </div>
+        <div class="row" id="rowMaxDown">
+          <span class="lbl" title="Sink rate at which the track turns full blue">Max sink</span>
+          <div class="ctl">
+            <input type="range" id="maxDown" min="0.5" max="30" step="0.5" value="2" data-default="2" style="width:90px">
+            <input type="number" id="maxDownN" value="2" step="0.5" min="0.1" data-default="2" style="width:54px">
+            <span style="color:var(--fg-mute)">m/s</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Cylinder = white inner body + magenta outer band + red forward wedge (opaque matte, constant on-screen size). Arrow = flat circle + triangle, always on top. Wing = elongated oval canopy.">Pilot shape</span>
+          <div class="ctl">
+            <div class="toggle" id="pilotShape">
+              <button data-v="cylinder">Cylinder</button>
+              <button data-v="arrow">Arrow</button>
+              <button data-v="wing">Wing</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Scales the on-screen pilot marker size (constant pixels at any zoom). Double-click the slider to restore the default.">Pilot size</span>
+          <div class="ctl">
+            <input type="range" id="pilotSize" min="0.1" max="1" step="0.1" value="0.5" data-default="0.5" style="width:120px">
+            <span id="pilotSizeV" style="min-width:36px;color:var(--fg-dim);font-variant-numeric:tabular-nums">0.5&times;</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl">Follow pilot</span>
+          <div class="ctl"><input type="checkbox" id="followCam" checked></div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Swap left/right mouse-button actions. Default (on): left = rotate 3D view, right = pan — better for touchpads. Off: left = pan, right = rotate. Middle-wheel zoom is unchanged.">Swap L/R mouse</span>
+          <div class="ctl"><input type="checkbox" id="swapButtons" checked></div>
+        </div>
+        <div class="row">
+          <span class="lbl">Camera</span>
+          <div class="ctl" style="gap:6px">
+            <button id="centerStart" class="tbtn" title="Center on takeoff" style="width:auto;padding:0 10px">Takeoff</button>
+            <button id="fitTrack2" class="tbtn" title="Fit whole track (R)" style="width:auto;padding:0 10px">Fit</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="hud">
+      <header>
+        <span>Live</span><span class="grip">&#x2630;</span>
+      </header>
+      <div class="body">
+        <div class="row2" title="Wall-clock time at the takeoff site (UTC offset estimated from launch longitude)."><span class="k">Time</span><span class="v" id="hTime">&mdash;</span></div>
+        <div class="row2"><span class="k">Altitude</span><span class="v" id="hAlt">&mdash;</span></div>
+        <div class="row2"><span class="k">Ground sp.</span><span class="v" id="hGs">&mdash;</span></div>
+        <div class="row2"><span class="k">Vario</span><span class="v" id="hVz">&mdash;</span></div>
+        <div class="row2"><span class="k">Track dist.</span><span class="v" id="hDist">&mdash;</span></div>
+      </div>
+    </div>
+
+    <div id="status" class="hidden">Ready</div>
+
+    <div id="chartPanel">
+      <div class="head"><span id="chartLabel">Altitude &amp; distance</span></div>
+      <div id="chart"></div>
+    </div>
+
+    <div id="bottomBar">
+      <div class="group">
+        <button id="loadBtn" class="tbtn" title="Open file (O)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        </button>
+        <button id="toggleChart" class="tbtn" title="Show altitude &amp; ground chart (gap = AGL)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 17l5-6 4 4 5-7 4 5"/>
+            <path d="M3 19l5-5 4 3 3-2 6 4" opacity="0.55"/>
+            <path d="M3 21h18"/>
+          </svg>
+        </button>
+        <button id="toggleFuture" class="tbtn" title="Show full track (disable fade)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 18l5-5 4 3"/>
+            <path d="M12 16l4-3 5 5" stroke-dasharray="3 3"/>
+          </svg>
+        </button>
+      </div>
+      <div class="group">
+        <button id="restartBtn" class="tbtn" title="Restart">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5-6v12z"/></svg>
+        </button>
+        <button id="playBtn" class="tbtn primary" title="Play / Pause (Space)">
+          <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <div id="speedCtl" title="Playback speed 0.1&times;-120&times; (wheel: 1 step, shift+wheel: 10 steps, dbl-click: reset to 5&times;)">
+          <input type="range" id="speedSlider" min="0" max="128" step="1" value="13">
+          <span id="speedV">5&times;</span>
+        </div>
+      </div>
+      <div id="progressGroup">
+        <span class="t" id="progTime">00:00</span>
+        <input type="range" id="progress" min="0" max="100" step="0.05" value="0">
+        <span class="t" id="progDur">00:00</span>
+      </div>
+    </div>
+
+    <div id="dropOverlay">
+      <div style="text-align:center">
+        Drop your flight file
+        <div class="sub">Replaces current track</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// Optional pre-embedded flight (Python tool injects this when an input file
+// is given). When empty, the landing screen stays up until a file is loaded.
+// flight_viewer.html is intentionally data-free: every fix is read from a
+// file dropped onto the landing screen at runtime, nothing is baked in.
+
+// ============================================================================
+//  Data state -- replaced on every flight load
+// ============================================================================
+let fixes = [];       // the parsed file -- positions are NEVER modified
+let loadedFlightData = null; // raw text and filename of the loaded flight
+let N = 0;
+let tMs, cumKm, T0 = 0, T1 = 0;
+
+// Launch-site local timezone, derived per flight in updateLaunchTimezone():
+//   tzName       IANA name (e.g. 'America/Los_Angeles') if tz-lookup loaded.
+//   tzOffsetMin  Offset from UTC in minutes, INCLUDING DST at the launch
+//                date. Used to shift epoch ms into "fake-UTC" representing
+//                local clock time, which is then displayed everywhere
+//                (HUD, chart axis, chart cursor, chart hover).
+//
+// Resolution strategy:
+//   (1) If tz-lookup is on the page, map (lat, lon) -> IANA name and
+//       use Intl.DateTimeFormat.formatToParts to extract the exact UTC
+//       offset for the takeoff moment -- this is DST-correct in every
+//       country with a published rule.
+//   (2) Otherwise fall back to round(lon/15)*60 minutes (no DST). This
+//       only matters when the viewer is opened with no network access.
+let tzName = null;
+let tzOffsetMin = 0;
+function offsetMinForTzAt(name, ms) {
+  try {
+    const d = new Date(ms);
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: name, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(d);
+    const m = {};
+    for (const p of parts) m[p.type] = p.value;
+    // Intl emits hour '24' for midnight in en-US; normalise to 0.
+    const hh = (+m.hour) % 24;
+    const fakeUtc = Date.UTC(+m.year, +m.month - 1, +m.day,
+                             hh, +m.minute, +m.second);
+    return Math.round((fakeUtc - d.getTime()) / 60000);
+  } catch (_) { return null; }
+}
+function updateLaunchTimezone() {
+  if (N === 0) { tzName = null; tzOffsetMin = 0; return; }
+  const lat = fixes[0].lat, lon = fixes[0].lon;
+  tzName = null;
+  // tz-lookup global is named 'tzlookup'. It may not be loaded yet
+  // (defer + slow network) or may be blocked entirely.
+  if (typeof tzlookup === 'function') {
+    try { tzName = tzlookup(lat, lon); } catch (_) { tzName = null; }
+  }
+  if (tzName) {
+    const off = offsetMinForTzAt(tzName, tMs[0]);
+    if (off != null) { tzOffsetMin = off; return; }
+  }
+  tzOffsetMin = Math.round(lon / 15) * 60;     // fallback, no DST
+}
+function fmtTzLabel() {
+  const m = tzOffsetMin;
+  const sign = m < 0 ? '-' : '+';
+  const abs = Math.abs(m);
+  const h = Math.floor(abs / 60);
+  const r = abs % 60;
+  return r === 0
+    ? `UTC${sign}${h}`
+    : `UTC${sign}${h}:${(r < 10 ? '0' : '') + r}`;
+}
+const tzShiftMs = ms => ms + tzOffsetMin * 60000;
+const tzUnshiftMs = ms => ms - tzOffsetMin * 60000;
+function fmtLocalHMS(ms) {
+  const d = new Date(tzShiftMs(ms));
+  const pad = n => (n < 10 ? '0' : '') + n;
+  return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes())
+       + ':' + pad(d.getUTCSeconds());
+}
+let latMin, latMax, lonMin, lonMax, centerLat = 0, centerLon = 0;
+
+function hav(lat1, lon1, lat2, lon2) {
+  const R = 6371000, toR = Math.PI / 180;
+  const p1 = lat1 * toR, p2 = lat2 * toR;
+  const dp = (lat2 - lat1) * toR, dl = (lon2 - lon1) * toR;
+  const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const toR = Math.PI / 180;
+  const f1 = lat1 * toR, f2 = lat2 * toR;
+  const dl = (lon2 - lon1) * toR;
+  const y = Math.sin(dl) * Math.cos(f2);
+  const x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+function recomputeFromFixes() {
+  N = fixes.length;
+  cumKm = new Float64Array(N);
+  tMs   = new Float64Array(N);
+  for (let i = 0; i < N; i++) tMs[i] = Date.parse(fixes[i].t);
+  for (let i = 1; i < N; i++) {
+    cumKm[i] = cumKm[i-1] + hav(fixes[i-1].lat, fixes[i-1].lon,
+                                fixes[i].lat, fixes[i].lon) / 1000;
+  }
+  T0 = tMs[0]; T1 = tMs[N-1];
+  latMin = 90; latMax = -90; lonMin = 180; lonMax = -180;
+  let lats = 0, lons = 0;
+  for (const f of fixes) {
+    lats += f.lat; lons += f.lon;
+    if (f.lat < latMin) latMin = f.lat;
+    if (f.lat > latMax) latMax = f.lat;
+    if (f.lon < lonMin) lonMin = f.lon;
+    if (f.lon > lonMax) lonMax = f.lon;
+  }
+  centerLat = lats / N; centerLon = lons / N;
+  updateLaunchTimezone();   // DST-aware via Intl when tz-lookup is loaded
+  groundAlt = null; groundReady = false; groundLoading = false;
+}
+
+// Terrain altitude (true metres above sea level) directly below each
+// fix, fetched from the source Terrarium DEM tiles at a fixed high
+// zoom. We bypass MapLibre's queryTerrainElevation because that one
+// only sees the tiles the camera currently has loaded -- which is often
+// a low-zoom parent tile (1-3 km per pixel) and undersamples mountain
+// terrain by hundreds of metres.
+//
+// Each Terrarium tile is fetched once, decoded once, cached in an
+// in-memory Map keyed by "z/x/y". Tiles for the same flight are reused
+// across showGround toggles.
+let groundAlt = null;       // Float64Array length N or null
+let groundReady = false;
+let groundLoading = false;
+
+const TERRARIUM_ZOOM = 14;  // ~10 m/pixel; tight enough for ridge tops
+const terrariumCache = new Map(); // "z/x/y" -> Promise<ImageData|null>
+
+function lonLatToTilePixel(lon, lat, z) {
+  const n = Math.pow(2, z);
+  const x = (lon + 180) / 360 * n;
+  const sinLat = Math.sin(lat * Math.PI / 180);
+  const y = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * n;
+  const tx = Math.floor(x), ty = Math.floor(y);
+  let px = Math.floor((x - tx) * 256);
+  let py = Math.floor((y - ty) * 256);
+  if (px < 0) px = 0; else if (px > 255) px = 255;
+  if (py < 0) py = 0; else if (py > 255) py = 255;
+  return { tx, ty, px, py };
+}
+
+function fetchTerrariumTile(z, tx, ty) {
+  const key = z + '/' + tx + '/' + ty;
+  let p = terrariumCache.get(key);
+  if (p) return p;
+  p = new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        resolve(ctx.getImageData(0, 0, img.width, img.height));
+      } catch (err) {
+        console.warn('terrarium decode failed', key, err);
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/'
+            + z + '/' + tx + '/' + ty + '.png';
+  });
+  terrariumCache.set(key, p);
+  return p;
+}
+
+function decodeTerrariumPixel(imageData, px, py) {
+  const d = imageData.data;
+  const i = (py * imageData.width + px) * 4;
+  return (d[i] * 256 + d[i + 1] + d[i + 2] / 256) - 32768;
+}
+
+// Async; fire-and-forget. Refreshes the chart progressively as each
+// tile arrives (debounced via requestAnimationFrame) and once more at
+// the end. Safe to call repeatedly -- the loading flag prevents
+// overlapping passes and the tile/groundAlt caches dedupe the work.
+function sampleGroundAlt() {
+  if (N === 0 || groundReady || groundLoading) return;
+  if (!groundAlt || groundAlt.length !== N) {
+    groundAlt = new Float64Array(N);
+    groundAlt.fill(NaN);
+  }
+  groundLoading = true;
+
+  // Bucket fixes by Terrarium tile so we hit each tile exactly once.
+  const buckets = new Map();
+  for (let i = 0; i < N; i++) {
+    if (!Number.isNaN(groundAlt[i])) continue;
+    const { tx, ty, px, py } = lonLatToTilePixel(
+      fixes[i].lon, fixes[i].lat, TERRARIUM_ZOOM);
+    const key = tx + '/' + ty;
+    let b = buckets.get(key);
+    if (!b) { b = { tx, ty, items: [] }; buckets.set(key, b); }
+    b.items.push({ i, px, py });
+  }
+
+  let refreshPending = false;
+  const scheduleRefresh = () => {
+    if (refreshPending) return;
+    refreshPending = true;
+    requestAnimationFrame(() => { refreshPending = false; refreshChart(); });
+  };
+
+  Promise.all(Array.from(buckets.values()).map(async ({ tx, ty, items }) => {
+    const data = await fetchTerrariumTile(TERRARIUM_ZOOM, tx, ty);
+    if (!data) return;
+    for (const { i, px, py } of items) {
+      groundAlt[i] = decodeTerrariumPixel(data, px, py);
+    }
+    scheduleRefresh();
+  })).then(() => {
+    let allValid = true;
+    for (let k = 0; k < N; k++) if (Number.isNaN(groundAlt[k])) { allValid = false; break; }
+    groundReady = allValid;
+    groundLoading = false;
+    refreshChart();
+    if (groundReady) {
+      autoAlignGround();
+    }
+  });
+}
+
+function autoAlignGround() {
+  if (N < 2 || !groundReady || !groundAlt) return;
+
+  const takeoffTrackAlt = altOf(fixes[0]);
+  const takeoffGroundAlt = groundAlt[0];
+
+  const landingTrackAlt = altOf(fixes[N - 1]);
+  const landingGroundAlt = groundAlt[N - 1];
+
+  if (isNaN(takeoffTrackAlt) || isNaN(takeoffGroundAlt) || isNaN(landingTrackAlt) || isNaN(landingGroundAlt)) return;
+
+  // 1. Calculate offset to align landing point to landing ground elevation
+  const offsetLanding = landingGroundAlt - landingTrackAlt;
+
+  // 2. Check takeoff point difference under this landing offset alignment
+  const takeoffTrackAltAligned = takeoffTrackAlt + offsetLanding;
+  const heightDiff = takeoffTrackAltAligned - takeoffGroundAlt;
+
+  // 3. Threshold check
+  // Cumulative errors from barometric temperature deviations (up to 8% of elevation drop)
+  // and GPS vertical noise can exceed 50m on big flights. We use a dynamic threshold:
+  // at least 100m, or 10% of the total flight elevation drop.
+  const elevationDrop = Math.abs(takeoffTrackAlt - landingTrackAlt);
+  const thresholdM = Math.max(100, 0.1 * elevationDrop);
+  let finalOffset = 0;
+
+  if (Math.abs(heightDiff) < thresholdM) {
+    // Takeoff point was close to ground, align to takeoff ground + 1.5m
+    finalOffset = takeoffGroundAlt + 1.5 - takeoffTrackAlt;
+  } else {
+    // Took off in the air, align to landing ground
+    finalOffset = offsetLanding;
+  }
+
+  const offsetInt = Math.round(finalOffset);
+  if (typeof window.applyAltOffset === 'function') {
+    window.applyAltOffset(offsetInt);
+  } else {
+    state.altOffset = Math.max(-2000, Math.min(2000, offsetInt));
+    pathDataCache = null;
+    spiralCache = null;
+    refreshChart();
+  }
+}
+
+// ============================================================================
+//  Parsers: IGC, GPX, KML
+// ============================================================================
+function deriveSpeeds(arr) {
+  const n = arr.length, win = 2;
+  const ts = arr.map(f => Date.parse(f.t));
+  for (let i = 0; i < n; i++) {
+    const a = Math.max(0, i - win), b = Math.min(n - 1, i + win);
+    const dt = (ts[b] - ts[a]) / 1000;
+    if (dt <= 0) continue;
+    const d = hav(arr[a].lat, arr[a].lon, arr[b].lat, arr[b].lon);
+    arr[i].gs_kmh = Math.round((d / dt) * 3.6 * 1000) / 1000;
+    arr[i].vz_ms  = Math.round((arr[b].alt_baro - arr[a].alt_baro) / dt * 1000) / 1000;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Between-fixes curve smoothing (the original samples are NEVER moved).
+//
+// We render the track as a C^1-continuous cubic Hermite spline that passes
+// exactly through every recorded fix. Only the segments *between* fixes
+// become curved -- a thermal spiral with N samples per turn keeps all N
+// samples on the original lat/lon, but the rendered line bows smoothly
+// between them instead of using the zig-zag chord polyline.
+//
+// Tangents are time-based central differences:
+//     v_i = (p_{i+1} - p_{i-1}) / (t_{i+1} - t_{i-1})
+// which makes the spline correctly handle non-uniform GPS timestamps and
+// turns this into Catmull-Rom (uniform) under uniform 1 Hz sampling.
+//
+// state.smoothSubdiv is the number of sub-segments inserted between each
+// pair of original fixes:
+//     0 / 1  -> raw chord polyline (no smoothing)
+//     2-8    -> visibly smooth curve
+//     >8     -> diminishing returns, more polygons
+// The original fixes are still drawn at exactly their recorded positions.
+// ---------------------------------------------------------------------------
+function splineSample(i, u) {
+  // Linear chord -- also the fallback when smoothing is off, or near the
+  // first / last fix where we have no neighbour to compute a tangent from.
+  if (state.smoothSubdiv <= 1 || N < 4 || i <= 0 || i >= N - 2) {
+    const a = fixes[i], b = fixes[Math.min(i + 1, N - 1)];
+    return [
+      a.lon + (b.lon - a.lon) * u,
+      a.lat + (b.lat - a.lat) * u,
+      altDisplay(a) + (altDisplay(b) - altDisplay(a)) * u,
+    ];
+  }
+  const t0 = tMs[i - 1], t1 = tMs[i], t2 = tMs[i + 1], t3 = tMs[i + 2];
+  const dt = (t2 - t1) || 1;
+  const d10 = (t2 - t0) || 1;     // total time across (i-1, i+1)
+  const d23 = (t3 - t1) || 1;     // total time across (i,   i+2)
+
+  const u2 = u * u, u3 = u2 * u;
+  const h00 =  2*u3 - 3*u2 + 1;
+  const h10 =      u3 - 2*u2 + u;
+  const h01 = -2*u3 + 3*u2;
+  const h11 =      u3 -   u2;
+
+  // Cubic Hermite per axis with tangents scaled by the local segment
+  // length AND by state.smoothTension. The tension is what controls how
+  // much the curve bows in the middle of each fix-to-fix segment:
+  //   tension == 1.0 -> standard Catmull-Rom (relatively flat middles,
+  //                     angular change concentrated near the endpoints)
+  //   tension >  1.0 -> larger tangents -> the cubic must travel a
+  //                     longer arc to land on each endpoint, so it
+  //                     bows out more in the middle of the segment
+  //                     (the curvature gets spread out evenly instead
+  //                     of bunching near the original sample points).
+  //   tension == 0   -> linear interpolation between endpoints.
+  const TEN = state.smoothTension;
+  function ax(p0, p1, p2, p3) {
+    const m1 = (p2 - p0) / d10 * dt * TEN;
+    const m2 = (p3 - p1) / d23 * dt * TEN;
+    return h00 * p1 + h10 * m1 + h01 * p2 + h11 * m2;
+  }
+  const A = fixes[i - 1], B = fixes[i], C = fixes[i + 1], D = fixes[i + 2];
+  return [
+    ax(A.lon, B.lon, C.lon, D.lon),
+    ax(A.lat, B.lat, C.lat, D.lat),
+    ax(altDisplay(A), altDisplay(B), altDisplay(C), altDisplay(D)),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Spiral reconstruction overlay.
+//
+// Why this exists: at 1 Hz sampling, a paraglider doing ~1 turn/s aliases
+// into a zig-zag of GPS fixes that no interpolation through those fixes
+// can turn back into a smooth helix -- the missing turns are physically
+// not in the data (Nyquist). To actually visualise the flight path we
+// have to introduce a model assumption (the rotation rate) and synthesise
+// a helix that
+//   * passes through the GPS fix at each end of the spiral segment
+//     exactly (so it joins the rest of the track without a jump),
+//   * loops at the user-chosen turns/sec in between, with the loop
+//     direction taken from the sign of the observed heading change,
+//   * uses the median orbit radius observed in the segment.
+//
+// This is rendered as a separate, distinctly coloured PathLayer so it
+// reads as a model output. The original spline through the raw fixes is
+// still drawn underneath -- the user can compare them.
+// ---------------------------------------------------------------------------
+
+let spiralCache = null;
+let spiralCacheSig = '';
+
+function _hdgAt(i) {
+  if (i <= 0 || i >= N) return 0;
+  return bearingDeg(fixes[i-1].lat, fixes[i-1].lon, fixes[i].lat, fixes[i].lon);
+}
+function _dHdgPerSec(i) {
+  if (i <= 1 || i >= N) return 0;
+  const h2 = _hdgAt(i), h1 = _hdgAt(i-1);
+  const d = ((h2 - h1 + 540) % 360) - 180;
+  const dt = (tMs[i] - tMs[i-1]) / 1000;
+  return dt > 0 ? d / dt : 0;
+}
+function _llToXY(lon, lat, refLat) {
+  const mLat = 111320;
+  const mLon = 111320 * Math.cos(refLat * Math.PI / 180);
+  return [lon * mLon, lat * mLat];
+}
+function _xyToLL(x, y, refLat) {
+  const mLat = 111320;
+  const mLon = 111320 * Math.cos(refLat * Math.PI / 180);
+  return [x / mLon, y / mLat];
+}
+
+// Find runs where |dHdg|/s exceeds the threshold for >= minDuration seconds.
+// Returns array of { startIdx, endIdx, dirSign }.
+//
+// Noise filter: a stationary device on the ground still produces apparent
+// heading swings from random GPS drift (each <2 m step gets a "heading"
+// even though the device is not moving). Those candidate segments have a
+// tiny orbit radius compared with a real spiral, so we discard segments
+// whose median position-to-segment-centroid distance is below
+// MIN_SPIRAL_RADIUS_M.
+const MIN_SPIRAL_RADIUS_M = 4;
+
+function detectSpiralSegments(thresholdDegPerSec, minDurationSec) {
+  const segs = [];
+  if (N < 4) return segs;
+  let i = 1;
+  while (i < N) {
+    if (Math.abs(_dHdgPerSec(i)) > thresholdDegPerSec) {
+      const start = Math.max(0, i - 1);
+      let signSum = 0, k = i;
+      while (k < N && Math.abs(_dHdgPerSec(k)) > thresholdDegPerSec) {
+        signSum += _dHdgPerSec(k);
+        k++;
+      }
+      const end = Math.min(N - 1, k);
+      if ((tMs[end] - tMs[start]) / 1000 >= minDurationSec && end - start >= 3) {
+        // Reject GPS-noise spirals: orbit radius too small.
+        const refLat = fixes[start].lat;
+        const mLat = 111320;
+        const mLon = 111320 * Math.cos(refLat * Math.PI / 180);
+        let cx = 0, cy = 0, n = 0;
+        for (let kk = start; kk <= end; kk++) {
+          cx += fixes[kk].lon * mLon; cy += fixes[kk].lat * mLat; n++;
+        }
+        cx /= n; cy /= n;
+        const dd = [];
+        for (let kk = start; kk <= end; kk++) {
+          dd.push(Math.hypot(fixes[kk].lon * mLon - cx, fixes[kk].lat * mLat - cy));
+        }
+        dd.sort((a, b) => a - b);
+        const rMed = dd[Math.floor(dd.length / 2)] || 0;
+        if (rMed >= MIN_SPIRAL_RADIUS_M) {
+          segs.push({ startIdx: start, endIdx: end, dirSign: Math.sign(signSum) || -1 });
+        }
+      }
+      i = k + 1;
+    } else {
+      i++;
+    }
+  }
+  return segs;
+}
+
+// Build one reconstructed helix segment as a dense [lon, lat, alt] polyline,
+// FAITHFULLY following the data instead of using a perfect cylinder.
+//
+// The reconstruction passes through every original GPS fix in the segment.
+// Between each consecutive pair (fix_i, fix_{i+1}) the helix:
+//   * orbits a center that is a 3-second sliding centroid (so center drift
+//     shows real terrain-relative motion, not a straight line),
+//   * uses a radius that linearly interpolates from |fix_i - center_i| to
+//     |fix_{i+1} - center_{i+1}|  -- a tightening spiral shows real
+//     tightening, a loosening one shows real loosening,
+//   * advances angle by EXACTLY the amount required to land on fix_{i+1},
+//     plus an integer multiple of 2pi chosen by the user's turns/sec,
+//   * advances altitude linearly from fix_i.alt to fix_{i+1}.alt -- so a
+//     variable sink rate produces variable vertical spacing in the helix.
+//
+// Net effect: the user's turnsPerSec only resolves the integer-turn
+// ambiguity hidden by 1 Hz aliasing. EVERYTHING ELSE is taken from the
+// raw data, so a divergent (tightening + accelerating) spiral renders as
+// such, not as an idealised cylinder.
+function reconstructSpiralSegment(seg, turnsPerSec, fps) {
+  const { startIdx, endIdx, dirSign } = seg;
+  if (endIdx <= startIdx + 1) return null;
+  const refLat = fixes[startIdx].lat;
+  const mLat = 111320, mLon = 111320 * Math.cos(refLat * Math.PI / 180);
+  const M = endIdx - startIdx + 1;
+  if (M < 2) return null;
+
+  // Local meters + altitude per fix in this segment.
+  const xs   = new Float64Array(M);
+  const ys   = new Float64Array(M);
+  const alts = new Float64Array(M);
+  const tt   = new Float64Array(M);
+  for (let k = 0; k < M; k++) {
+    const f = fixes[startIdx + k];
+    xs[k]   = f.lon * mLon;
+    ys[k]   = f.lat * mLat;
+    alts[k] = altDisplay(f);
+    tt[k]   = tMs[startIdx + k];
+  }
+
+  // 3-second centred sliding centroid -> per-fix orbit center.
+  const W_MS = 1500;
+  const cxs = new Float64Array(M);
+  const cys = new Float64Array(M);
+  for (let i = 0; i < M; i++) {
+    let lo = i, hi = i;
+    while (lo > 0     && tt[i] - tt[lo - 1] <= W_MS) lo--;
+    while (hi < M - 1 && tt[hi + 1] - tt[i] <= W_MS) hi++;
+    let sx = 0, sy = 0, n = 0;
+    for (let j = lo; j <= hi; j++) { sx += xs[j]; sy += ys[j]; n++; }
+    cxs[i] = sx / n; cys[i] = sy / n;
+  }
+
+  // Per-fix angular position about the local center, and per-fix radius.
+  const thetas = new Float64Array(M);
+  const rs     = new Float64Array(M);
+  for (let i = 0; i < M; i++) {
+    const dx = xs[i] - cxs[i], dy = ys[i] - cys[i];
+    thetas[i] = Math.atan2(dy, dx);
+    rs[i]     = Math.hypot(dx, dy);
+  }
+
+  // Walk pair-by-pair. For each (i, i+1) build a sub-arc that ends exactly
+  // on the next fix. The sub-arc's swept angle is shortDelta + n*2pi
+  // where shortDelta is in (-pi, pi] (the unique short rotation between
+  // the two angular positions) and n is the integer chosen by:
+  //     n = round( (expected - shortDelta) / 2pi )
+  // with expected = the user's prior on signed angular speed. This is the
+  // only place the user's turnsPerSec enters: it picks how many full
+  // hidden turns lie between the two GPS samples.
+  //
+  // Sign convention:
+  //   * dirSign comes from the SIGN OF COMPASS dHdg
+  //       (positive compass dHdg = heading 0->90->180->... = CW from above)
+  //   * atan2(dy, dx) here is in the math frame: theta increases CCW
+  //       from above (because dx is +east and dy is +north)
+  //   * compass +dHdg (CW from above) ==  atan2 theta DECREASING
+  //   * so the math-frame angular speed has the OPPOSITE sign to dirSign.
+  const TWO_PI = 2 * Math.PI;
+  const omegaSign = -dirSign;     // map compass-frame sign to atan2 frame
+  const path = [];
+  let totalAngAbs = 0;
+  for (let i = 0; i < M - 1; i++) {
+    const dt = (tt[i + 1] - tt[i]) / 1000;
+    if (!(dt > 0)) continue;
+    const expected = omegaSign * TWO_PI * turnsPerSec * dt;
+    let shortDelta = thetas[i + 1] - thetas[i];
+    while (shortDelta >  Math.PI) shortDelta -= TWO_PI;
+    while (shortDelta <= -Math.PI) shortDelta += TWO_PI;
+    const n = Math.round((expected - shortDelta) / TWO_PI);
+    const total = shortDelta + n * TWO_PI;
+    totalAngAbs += Math.abs(total);
+
+    const steps = Math.max(2, Math.ceil(dt * fps));
+    for (let s = 0; s < steps; s++) {
+      const u   = s / steps;
+      const cx  = cxs[i]    + u * (cxs[i + 1]    - cxs[i]);
+      const cy  = cys[i]    + u * (cys[i + 1]    - cys[i]);
+      const r   = rs[i]     + u * (rs[i + 1]     - rs[i]);
+      const th  = thetas[i] + u * total;
+      const x   = cx + r * Math.cos(th);
+      const y   = cy + r * Math.sin(th);
+      const alt = alts[i]   + u * (alts[i + 1]   - alts[i]);
+      path.push([x / mLon, y / mLat, alt]);
+    }
+  }
+  // Final anchor: exactly the last fix.
+  path.push([xs[M - 1] / mLon, ys[M - 1] / mLat, alts[M - 1]]);
+
+  // Mean radius for status line.
+  let rSum = 0; for (let i = 0; i < M; i++) rSum += rs[i];
+  const rMean = rSum / M;
+
+  return {
+    path,
+    tStart: tt[0],
+    tEnd:   tt[M - 1],
+    radius: rMean,
+    turns:  totalAngAbs / TWO_PI,
+    dir:    dirSign < 0 ? 'CW' : 'CCW',
+  };
+}
+
+function getSpiralRecon() {
+  if (!state.spiralReconOn || N < 4) return [];
+  const sig = `recon|${state.altSrc}|${state.exag.toFixed(2)}|`
+            + `${state.altOffset.toFixed(1)}|`
+            + `${state.spiralTurnsPerSec.toFixed(2)}|${state.spiralMode}|`
+            + `${state.spiralManualStartMs}|${state.spiralManualEndMs}|`
+            + `${state.spiralThreshold}|N${N}`;
+  if (spiralCache && sig === spiralCacheSig) return spiralCache;
+
+  let segments = [];
+  if (state.spiralMode === 'manual'
+      && state.spiralManualStartMs > 0 && state.spiralManualEndMs > 0
+      && state.spiralManualEndMs > state.spiralManualStartMs) {
+    let i0 = 0, i1 = N - 1;
+    while (i0 < N - 1 && tMs[i0] < state.spiralManualStartMs) i0++;
+    while (i1 > 0 && tMs[i1] > state.spiralManualEndMs) i1--;
+    if (i1 - i0 >= 3) {
+      let sumSign = 0;
+      for (let k = i0 + 1; k <= i1; k++) sumSign += _dHdgPerSec(k);
+      segments = [{ startIdx: i0, endIdx: i1, dirSign: Math.sign(sumSign) || -1 }];
+    }
+  } else {
+    segments = detectSpiralSegments(state.spiralThreshold, 3);
+  }
+
+  const fps = 30;
+  const out = segments
+    .map(seg => reconstructSpiralSegment(seg, state.spiralTurnsPerSec, fps))
+    .filter(x => x);
+  spiralCache    = out;
+  spiralCacheSig = sig;
+  return out;
+}
+
+function buildSpiralLayers() {
+  const data = getSpiralRecon();
+  if (!data.length) return [];
+  return [new deck.PathLayer({
+    id: 'spiral-recon',
+    data,
+    getPath: d => d.path,
+    getColor: d => {
+      const a = state.showFuture ? 230 : segmentAlpha(d.tStart, d.tEnd);
+      return [255, 140, 40, a];
+    },
+    getWidth: state.trackWidth + 1,
+    widthUnits: 'pixels',
+    widthMinPixels: 1, widthMaxPixels: 80,
+    billboard: true,
+    capRounded: true,
+    jointRounded: true,
+    parameters: { depthTest: true, depthMask: true },
+    updateTriggers: {
+      getColor: [state.currentMs, state.showFuture, state.trailFadeSec],
+      getWidth: state.trackWidth,
+    },
+  })];
+}
+
+function dmToDeg(s, hemi, degDigits) {
+  const deg = parseInt(s.slice(0, degDigits), 10);
+  const minutes = parseInt(s.slice(degDigits), 10) / 1000;
+  let v = deg + minutes / 60;
+  if (hemi === 'S' || hemi === 'W') v = -v;
+  return v;
+}
+function parseIGC(text) {
+  const lines = text.split(/\r?\n/);
+  let date = null;
+  const out = [];
+  for (const line of lines) {
+    if (line.startsWith('HFDTE')) {
+      const digits = line.replace(/\D/g, '').slice(0, 6);
+      if (digits.length === 6) {
+        date = { y: 2000 + parseInt(digits.slice(4,6),10),
+                 m: parseInt(digits.slice(2,4),10),
+                 d: parseInt(digits.slice(0,2),10) };
+      }
+    } else if (line[0] === 'B' && line.length >= 35 && date) {
+      const hh = parseInt(line.slice(1,3), 10);
+      const mi = parseInt(line.slice(3,5), 10);
+      const ss = parseInt(line.slice(5,7), 10);
+      if (line[24] !== 'A') continue;
+      const lat = dmToDeg(line.slice(7, 14),  line[14], 2);
+      const lon = dmToDeg(line.slice(15, 23), line[23], 3);
+      const alt_baro = parseInt(line.slice(25, 30), 10);
+      const alt_gps  = parseInt(line.slice(30, 35), 10);
+      const tIso = new Date(Date.UTC(date.y, date.m - 1, date.d, hh, mi, ss))
+                    .toISOString().replace('.000Z', 'Z');
+      out.push({ t: tIso, lat, lon, alt_gps, alt_baro, gs_kmh: 0, vz_ms: 0 });
+    }
+  }
+  deriveSpeeds(out);
+  return out;
+}
+
+function parseGPX(text) {
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) return [];
+  const out = [];
+  const trkpts = doc.getElementsByTagName('trkpt');
+  for (const pt of trkpts) {
+    const lat = parseFloat(pt.getAttribute('lat'));
+    const lon = parseFloat(pt.getAttribute('lon'));
+    if (isNaN(lat) || isNaN(lon)) continue;
+    const eleEl = pt.getElementsByTagName('ele')[0];
+    const ele = eleEl ? parseFloat(eleEl.textContent) : 0;
+    const timeEl = pt.getElementsByTagName('time')[0];
+    const t = timeEl ? new Date(timeEl.textContent).toISOString().replace('.000Z','Z')
+                     : new Date(Date.UTC(2000,0,1,0,0,out.length)).toISOString().replace('.000Z','Z');
+    out.push({ t, lat, lon, alt_gps: ele, alt_baro: ele, gs_kmh: 0, vz_ms: 0 });
+  }
+  // GPX has no separate baro; same as gps
+  deriveSpeeds(out);
+  return out;
+}
+
+// localName-based descendant search (handles xmlns prefixes like gx:)
+function elsByLocalName(root, name) {
+  const out = [];
+  const walk = node => {
+    if (node.nodeType !== 1) return;
+    if (node.localName === name) out.push(node);
+    for (const c of node.childNodes) walk(c);
+  };
+  walk(root);
+  return out;
+}
+
+function parseKML(text) {
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) return [];
+  const out = [];
+
+  // 1) gx:Track  -- preferred (has timestamps)
+  const tracks = elsByLocalName(doc.documentElement, 'Track');
+  for (const track of tracks) {
+    const whens  = elsByLocalName(track, 'when');
+    const coords = elsByLocalName(track, 'coord');
+    const n = Math.min(whens.length, coords.length);
+    for (let i = 0; i < n; i++) {
+      const t = whens[i].textContent.trim();
+      const parts = coords[i].textContent.trim().split(/\s+/);
+      const lon = parseFloat(parts[0]);
+      const lat = parseFloat(parts[1]);
+      const alt = parseFloat(parts[2] || '0');
+      if (isNaN(lat) || isNaN(lon)) continue;
+      const tIso = new Date(t).toISOString().replace('.000Z','Z');
+      out.push({ t: tIso, lat, lon, alt_gps: alt, alt_baro: alt, gs_kmh: 0, vz_ms: 0 });
+    }
+  }
+
+  // 2) Plain LineString  -- no time, synthesize 4 Hz (250 ms)
+  if (out.length === 0) {
+    const lineStrings = elsByLocalName(doc.documentElement, 'LineString');
+    let idx = 0;
+    for (const ls of lineStrings) {
+      const cEl = elsByLocalName(ls, 'coordinates')[0];
+      if (!cEl) continue;
+      const lines = cEl.textContent.trim().split(/\s+/);
+      for (const line of lines) {
+        const parts = line.split(',');
+        if (parts.length < 2) continue;
+        const lon = parseFloat(parts[0]);
+        const lat = parseFloat(parts[1]);
+        const alt = parseFloat(parts[2] || '0');
+        if (isNaN(lat) || isNaN(lon)) continue;
+        const stepMs = 1000 / (state.kmlRateHz || 4);
+        const t = new Date(Date.UTC(2000,0,1,0,0,0) + idx * stepMs).toISOString().replace('.000Z','Z');
+        idx++;
+        out.push({ t, lat, lon, alt_gps: alt, alt_baro: alt, gs_kmh: 0, vz_ms: 0 });
+      }
+    }
+  }
+
+  deriveSpeeds(out);
+  return out;
+}
+
+function parseFlightFile(text, filename) {
+  const lower = (filename || '').toLowerCase();
+  if (lower.endsWith('.igc')) return parseIGC(text);
+  if (lower.endsWith('.gpx')) return parseGPX(text);
+  if (lower.endsWith('.kml')) return parseKML(text);
+  // content sniff
+  if (/<gpx[\s>]/i.test(text)) return parseGPX(text);
+  if (/<kml[\s>]/i.test(text)) return parseKML(text);
+  if (/^A[A-Z]{3}/m.test(text) || /^HFDTE/m.test(text)) return parseIGC(text);
+  return [];
+}
+
+// ============================================================================
+//  UI state
+// ============================================================================
+const state = {
+  altSrc: 'gps',
+  base: 'sat',
+  units: 'metric',
+  colorMode: 'vario',   // 'vario' | 'single'
+  varioMaxUp: 2,        // m/s -- saturates red at this climb rate
+  varioMaxDown: 2,      // m/s -- saturates blue at this sink rate
+  singleColor: [0, 255, 0],     // pure green
+  follow: true,
+  exag: 1.0,
+  altOffset: 0,
+  trackWidth: 2,
+  tube3d: 0,            // meters of 3D ribbon (0 = pure pixel line)
+  smoothSubdiv: 6,      // spline subdivisions between fixes (0/1 = off)
+  smoothTension: 1.0,   // tangent magnitude scale (1.0 = standard Catmull-Rom,
+                        //   higher = more bow across the segment middle)
+  kmlRateHz: 4,         // synthesized rate for plain KML (LineString) files
+
+  // Spiral reconstruction overlay -- model output, not raw data. 1 Hz GPS
+  // cannot capture rotation faster than 0.5 turns/s (Nyquist limit), so a
+  // fast spiral aliases into a zig-zag of points that no spline through
+  // those points can recover. This overlay generates a smooth helix that
+  // is anchored at the GPS fixes at each end of the segment but loops in
+  // between at the user-chosen rotation rate.
+  spiralReconOn: false,
+  spiralMode: 'auto',           // 'auto' (threshold-detect) | 'manual' (time range)
+    // 0.30 t/s prior maps to n=0 (no hidden full turns per sample-pair)
+    // for an orbit radius around 5-10 m, where any n >= 1 would imply a
+    // tangential speed exceeding what a paraglider can physically reach
+    // (omega * r > 30 m/s at r >= 5 m). Push the slider higher only if
+    // you have prior evidence that the wing was rotating faster than the
+    // visible short-angle drift.
+    spiralTurnsPerSec: 0.30,
+  spiralThreshold: 60,          // |dHdg|/s threshold for auto-detect
+  spiralManualStartMs: 0,       // 0 = unset
+  spiralManualEndMs: 0,         // 0 = unset
+  showFuture: false,    // hide unflown portion of the track by default;
+                        //   when true, the whole track renders at full
+                        //   opacity (fade is bypassed entirely)
+  trailFadeSec: 0,      // seconds of fully-visible trail behind the pilot
+                        //   before fading to transparent. 0 = off (whole
+                        //   past stays bright); max clamps to the loaded
+                        //   flight's duration when one loads.
+  pilotShape: 'cylinder',   // 'cylinder' = white body + magenta band + red wedge, 'arrow' = circle + triangle, 'wing' = canopy oval
+  pilotSize: 0.5,       // multiplier on the base pilot marker pixel footprint
+  speed: 5,
+  playing: true,
+  currentMs: 0,
+  showAlt: false,
+  showGround: false,    // plot terrain altitude under each fix vs time
+                        //   (the gap between this and pilot altitude = AGL)
+  swapButtons: true,    // default swapped: left = rotate (3D view), right = pan.
+                        //   Better for touchpads. Uncheck to restore classic
+                        //   left-pan / right-rotate mapping.
+};
+
+const U = {
+  altLabel:  () => state.units === 'metric' ? 'm' : 'ft',
+  altConv:   m  => state.units === 'metric' ? m   : m * 3.28084,
+  distLabel: () => state.units === 'metric' ? 'km' : 'mi',
+  distConv:  km => state.units === 'metric' ? km : km * 0.621371,
+  gsLabel:   () => state.units === 'metric' ? 'km/h' : 'mph',
+  gsConv:    kmh => state.units === 'metric' ? kmh : kmh * 0.621371,
+  vzLabel:   () => state.units === 'metric' ? 'm/s' : 'ft/min',
+  vzConv:    ms  => state.units === 'metric' ? ms : ms * 196.85,
+  vzPrec:    () => state.units === 'metric' ? 2 : 0,
+};
+function altOf(f)      { return state.altSrc === 'gps' ? f.alt_gps : f.alt_baro; }
+function altDisplay(f) { return (altOf(f) + state.altOffset) * state.exag; }
+
+// HSL -> RGB (CSS4 algorithm)
+function hslToRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0)*255), Math.round(f(8)*255), Math.round(f(4)*255)];
+}
+
+// Vario -> color. Negative vz (sink) -> blue; 0 -> green; positive (climb) -> red.
+// Smooth gradient via HSL hue interpolation 240 -> 120 -> 0.
+function varioColor(vz) {
+  const denom = vz >= 0 ? Math.max(0.1, state.varioMaxUp)
+                        : Math.max(0.1, state.varioMaxDown);
+  let x = vz / denom;
+  if (x > 1) x = 1; else if (x < -1) x = -1;
+  const hue = 120 * (1 - x);   // -1 -> 240 blue, 0 -> 120 green, +1 -> 0 red
+  return hslToRgb(hue, 80, 50);
+}
+
+// Smoothed vario for coloring (7-sample window) so the gradient is calm.
+function smoothedVario(i) {
+  const w = 3;
+  const a = Math.max(0, i - w), b = Math.min(N - 1, i + w);
+  let sum = 0;
+  for (let k = a; k <= b; k++) sum += fixes[k].vz_ms;
+  return sum / (b - a + 1);
+}
+
+// Pilot marker -- built only from SolidPolygonLayer (a filled polygon at
+// altitude in world meters). This primitive renders reliably in
+// MapboxOverlay's interleaved mode; the earlier IconLayer (async atlas
+// loading raced with frame-by-frame layer replacement) and SimpleMeshLayer
+// (relies on LightingEffect that interleaved mode does not attach) were
+// both fragile.
+//
+// Two shapes are offered:
+//   * 'arrow' -- circle at pilot pos + small forward triangle for heading
+//   * 'wing'  -- elongated oval (paraglider canopy) along flight direction
+//
+// All meter-based dimensions scale linearly with `state.pilotSize`.
+
+// Convert a list of local-mesh (x_meters, y_meters) points -- where +Y is
+// the pilot's forward / nose direction -- into absolute [lng, lat, alt]
+// vertices, rotated by compass heading. The flat-earth metric scale is
+// good enough at paragliding distances (sub-100 m).
+function pilotPolygon(lon, lat, alt, headingDeg, localXY) {
+  const h = headingDeg * Math.PI / 180;
+  const ch = Math.cos(h), sh = Math.sin(h);
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * Math.cos(lat * Math.PI / 180);
+  return localXY.map(([x, y]) => {
+    // Compass: heading 0 = +Y (north), heading 90 = +X (east).
+    const xr =  ch * x + sh * y;
+    const yr = -sh * x + ch * y;
+    return [lon + xr / mPerDegLon, lat + yr / mPerDegLat, alt];
+  });
+}
+
+// Regular polygon (used for the 'arrow' shape's circular position marker).
+function discXY(radiusM, segments) {
+  const out = [];
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * 2 * Math.PI;
+    out.push([radiusM * Math.cos(a), radiusM * Math.sin(a)]);
+  }
+  return out;
+}
+
+// Annulus in local XY: [outer CCW, inner CW] for deck.gl polygon holes.
+function discRingXY(outerR, innerR, segments) {
+  return [discXY(outerR, segments), discXY(innerR, segments).reverse()];
+}
+
+function pilotPolygonRings(lon, lat, alt, headingDeg, ringsXY) {
+  const h = headingDeg * Math.PI / 180;
+  const ch = Math.cos(h), sh = Math.sin(h);
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * Math.cos(lat * Math.PI / 180);
+  return ringsXY.map(ring =>
+    ring.map(([x, y]) => {
+      const xr =  ch * x + sh * y;
+      const yr = -sh * x + ch * y;
+      return [lon + xr / mPerDegLon, lat + yr / mPerDegLat, alt];
+    })
+  );
+}
+
+// Axis-aligned ellipse in local mesh coords. halfX controls extent along
+// +X (perpendicular to the pilot's nose), halfY controls extent along +Y
+// (forward). Note: which one is the *long* axis depends on which value
+// the caller passes -- naming the params after the axis (not the role)
+// avoids the bug where the caller and the function disagreed about which
+// dimension was the "length".
+function ellipseXY(halfX, halfY, segments) {
+  const out = [];
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * 2 * Math.PI;
+    out.push([halfX * Math.cos(a), halfY * Math.sin(a)]);
+  }
+  return out;
+}
+
+// GPU state shared by every pilot sub-layer: always-on-top, no depth
+// write, no face culling. The double-key form covers both deck.gl 8.x
+// (depthTest/depthMask) and deck.gl 9.x (depthCompare/depthWriteEnabled),
+// so the marker shows regardless of which bundle was loaded.
+const PILOT_GL_PARAMS = {
+  depthTest: false, depthMask: false, cullFace: false,
+  depthCompare: 'always', depthWriteEnabled: false, cullMode: 'none',
+};
+
+// Visual palette
+const PILOT_RED     = [239,  68,  68, 255];
+const PILOT_WHITE   = [255, 255, 255, 255];
+const PILOT_MAGENTA = [255,   0, 255, 255];
+// Opaque matte: full ambient, zero diffuse/specular -- no phong highlights
+// or see-through tint from deck.gl's default extruded-polygon lighting.
+const PILOT_MATTE_MATERIAL = {
+  ambient: 1,
+  diffuse: 0,
+  shininess: 0,
+  specularColor: [0, 0, 0],
+};
+const PILOT_BLACK   = [  0,   0,   0, 255];
+
+// Depth-tested GL state for the cylinder+wedge pair. The body writes
+// depth; the wedge reads it so any wedge faces inside the cylinder
+// volume are occluded. Arrow/Wing still use PILOT_GL_PARAMS (always
+// on top) because they are flat billboards.
+const PILOT_BODY_GL_PARAMS = {
+  depthTest: true, depthMask: true,
+  depthCompare: 'less-equal', depthWriteEnabled: true,
+  cullFace: false, cullMode: 'none',
+};
+const PILOT_WEDGE_GL_PARAMS = {
+  depthTest: true, depthMask: false,
+  depthCompare: 'less-equal', depthWriteEnabled: false,
+  cullFace: false, cullMode: 'none',
+};
+
+// ----------------------------------------------------------------------------
+//  3-D pilot marker: white inner cylinder + magenta outer band + red wedge.
+//
+//  Dimensions use mPerPx so the marker keeps a constant on-screen size at
+//  every zoom level (same scheme as Arrow / Wing).
+//
+//  White body  : rWhite (< rHole), height rHole, centred on pilot alt.
+//  Magenta band: annulus (rHole..rShell), shellH tall (< cylH), centred on
+//                pilot alt -- hole leaves white centre visible from above.
+//  Red wedge   : shorter (50 % body height), base on the forward edge.
+//  All three parts use PILOT_MATTE_MATERIAL + colorFormat:'RGB' for opaque,
+//  flat (non-reflective) faces.
+// ----------------------------------------------------------------------------
+
+function buildPilotCylinderLayers(pos, headingDeg, pilotSize, mpp) {
+  const rHole     = 8 * (2 / 3) * pilotSize * mpp;   // shell inner / wedge base radius
+  const shellBand = 0.55 * pilotSize * mpp;          // annulus width (≥ ~2 px on screen)
+  const rShell    = rHole + shellBand;
+  // Inset white body so its side wall does not share a surface with the shell
+  // inner wall (which caused z-fighting → magenta band flashing white on zoom).
+  const rWhite    = Math.max(rHole - shellBand * 0.3, rHole - 0.12 * pilotSize * mpp);
+  const rWedge    = 5    * pilotSize * mpp;
+  const headLen   = 14   * pilotSize * mpp;
+  const cylH      = rHole;
+  const wedgeH    = cylH * 0.5;
+  const shellH    = cylH * 0.75;
+  const cylBase   = pos[2] - cylH / 2;
+  const shellBase = pos[2] - shellH / 2;
+  const wedgeBase = pos[2] - wedgeH / 2;
+
+  const cylPoly   = pilotPolygon(pos[0], pos[1], cylBase,   0, discXY(rWhite, 32));
+  const shellPoly = pilotPolygonRings(pos[0], pos[1], shellBase, 0, discRingXY(rShell, rHole, 32));
+
+  const wedgePoly = pilotPolygon(pos[0], pos[1], wedgeBase, headingDeg, [
+    [ -rWedge, rHole           ],
+    [ +rWedge, rHole           ],
+    [  0,      rHole + headLen ],
+  ]);
+
+  const bodyLayer = (id, polygon, h, color, glParams) =>
+    new deck.PolygonLayer({
+      id,
+      data: [{ polygon }],
+      getPolygon: d => d.polygon,
+      getElevation: h,
+      getFillColor: color,
+      extruded: true,
+      filled: true,
+      stroked: false,
+      opacity: 1,
+      colorFormat: 'RGB',
+      material: PILOT_MATTE_MATERIAL,
+      parameters: glParams,
+      _subLayerProps: {
+        fill:   { parameters: glParams, colorFormat: 'RGB', material: PILOT_MATTE_MATERIAL },
+        stroke: { parameters: glParams },
+      },
+    });
+
+  // White body first, shell second: inset rWhite avoids shared side walls; shell
+  // paints the annulus on top so top-down view stays white centre + magenta ring.
+  return [
+    bodyLayer('pilot-cyl-body',  cylPoly,   cylH,   PILOT_WHITE,   PILOT_BODY_GL_PARAMS),
+    bodyLayer('pilot-cyl-shell', shellPoly, shellH, PILOT_MAGENTA, PILOT_BODY_GL_PARAMS),
+    bodyLayer('pilot-cyl-wedge', wedgePoly, wedgeH, PILOT_RED,     PILOT_WEDGE_GL_PARAMS),
+  ];
+}
+
+function pilotSubLayer(id, polygon, fill, stroke, strokePx) {
+  // PolygonLayer is the *composite* layer: it draws a SolidPolygonLayer
+  // for fill and a PathLayer for the outline. SolidPolygonLayer alone has
+  // no stroke support, so any getLineColor/getLineWidth set on it gets
+  // silently dropped -- which is exactly what hid the black ring.
+  return new deck.PolygonLayer({
+    id,
+    data: [{ polygon }],
+    getPolygon: d => d.polygon,
+    getFillColor: fill,
+    getLineColor: stroke,
+    filled: true,
+    stroked: true,
+    getLineWidth: strokePx,
+    lineWidthUnits: 'pixels',
+    lineWidthMinPixels: strokePx,
+    extruded: false,
+    parameters: PILOT_GL_PARAMS,
+    // Push the same GPU state into the auto-generated stroke sub-layer
+    // so the outline is also always-on-top and not culled.
+    _subLayerProps: {
+      stroke: { parameters: PILOT_GL_PARAMS },
+    },
+  });
+}
+
+// ============================================================================
+//  MapLibre + deck.gl -- created lazily after first flight load
+// ============================================================================
+let map = null;
+let overlay = null;
+let mapReady = false;
+let pendingApply = null;
+// (pathDataCache + pathDataSig live with buildPathLayers; see below.)
+
+function initMap() {
+  if (map) return;
+  document.getElementById('app').style.display = '';
+  const mapStyle = {
+    version: 8,
+    sources: {
+      'sat': { type: 'raster', tiles: ['https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+               tileSize: 256, maxzoom: 19, attribution: 'Tiles \u00a9 Esri' },
+      'osm': { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+               tileSize: 256, maxzoom: 19, attribution: '\u00a9 OpenStreetMap contributors' },
+      'terrarium': { type: 'raster-dem',
+               tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+               encoding: 'terrarium', tileSize: 256, maxzoom: 15,
+               attribution: 'DEM \u00a9 Mapzen / AWS Open Data' },
+    },
+    layers: [
+      { id: 'bg',  type: 'background', paint: { 'background-color': '#0a1226' } },
+      { id: 'sat', type: 'raster', source: 'sat' },
+      { id: 'osm', type: 'raster', source: 'osm', layout: { visibility: 'none' } },
+    ],
+    terrain: { source: 'terrarium', exaggeration: state.exag },
+    sky: {},
+  };
+  map = new maplibregl.Map({
+    container: 'mapContainer', style: mapStyle,
+    center: [centerLon || 0, centerLat || 0],
+    zoom: 13, pitch: 65, bearing: 0, maxPitch: 75, hash: false,
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+  map.addControl(new maplibregl.FullscreenControl({ container: document.getElementById('map') }), 'top-right');
+  map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+  map.addControl(new AppControl([
+    { title: 'Toggle follow pilot (C)', icon: '&#x2316;', onClick: centerOnPilot },
+    { title: 'Fit whole track (R)', icon: '&#x2922;', onClick: () => fitTrack() },
+  ]), 'top-right');
+
+  map.on('load', () => {
+    overlay = new deck.MapboxOverlay({ interleaved: true, layers: [] });
+    // Bottom-left so the control slot does not compete with NavigationControl
+    // (+/- zoom, compass) stacked in the top-right corner.
+    map.addControl(overlay, 'bottom-left');
+    Plotly.newPlot('chart', [], {
+      margin: { l: 55, r: 20, t: 20, b: 36 },
+      paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    }, { displayModeBar: false, responsive: true });
+    chartReady = true;
+    mapReady = true;
+    configureMapZoom();
+    if (window._wireMapGestures) window._wireMapGestures();
+    if (pendingApply) { pendingApply(); pendingApply = null; }
+    requestAnimationFrame(tick);
+  });
+
+  // (Ground-altitude sampling no longer depends on map state; it fetches
+  // Terrarium DEM tiles directly at a fixed high zoom in
+  // sampleGroundAlt().)
+
+  map.on('error', e => {
+    console.error('MapLibre error:', e && e.error);
+    showStatus('Map error: ' + (e && e.error && e.error.message || 'see console'), true);
+  });
+}
+
+// Slower default zoom (mouse wheel + trackpad) and reliable +/- buttons
+// while follow-pilot is on. Follow mode calls setCenter() every animation
+// frame; an animated zoomIn/zoomOut (250 ms ease) gets cancelled on the
+// next frame and looks like a dead click. Instant setZoom survives.
+function configureMapZoom() {
+  if (!map) return;
+  if (map.scrollZoom) {
+    map.scrollZoom.setWheelZoomRate(1 / 900);  // default 1/450
+    map.scrollZoom.setZoomRate(1 / 280);       // default ~1/100, trackpad
+  }
+  const root = map.getContainer();
+  const applyZoomStep = delta => {
+    const z = Math.max(0, Math.min(22, map.getZoom() + delta));
+    map.setZoom(z, { animate: false });
+  };
+  const wireZoomBtn = (sel, fn) => {
+    const el = root.querySelector(sel);
+    if (!el || el.__zoomWired) return;
+    el.__zoomWired = true;
+    el.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      fn();
+    }, { capture: true });
+  };
+  wireZoomBtn('.maplibregl-ctrl-zoom-in',  () => applyZoomStep( 1));
+  wireZoomBtn('.maplibregl-ctrl-zoom-out', () => applyZoomStep(-1));
+}
+
+class AppControl {
+  constructor(buttons) { this.buttons = buttons; }
+  onAdd() {
+    const c = document.createElement('div');
+    c.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    for (const b of this.buttons) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.title = b.title;
+      btn.innerHTML = b.icon;
+      btn.addEventListener('click', b.onClick);
+      c.appendChild(btn);
+    }
+    this._c = c;
+    return c;
+  }
+  onRemove() { this._c.parentNode.removeChild(this._c); }
+}
+
+// ============================================================================
+//  deck.gl layers
+// ============================================================================
+// Group consecutive fixes by quantized smoothed-vario bin into multi-vertex
+// paths. Each bin becomes one PathLayer item with a single color, but inside
+// that item the joints are rounded so the geometry reads as one smooth ribbon.
+// Adjacent paths share an endpoint so they butt up cleanly.
+const VARIO_BINS = 32;     // -16..+16 -> 33 unique colors total
+function varioBin(vz) {
+  const denom = vz >= 0 ? Math.max(0.1, state.varioMaxUp)
+                        : Math.max(0.1, state.varioMaxDown);
+  let x = vz / denom;
+  if (x > 1) x = 1; else if (x < -1) x = -1;
+  return Math.round(x * (VARIO_BINS / 2));
+}
+function binToVario(b) {
+  const x = b / (VARIO_BINS / 2);
+  return x >= 0 ? x * state.varioMaxUp : x * state.varioMaxDown;
+}
+
+// Build path data as ONE segment per fix-to-fix gap, each tagged with its
+// time span (tStart, tEnd) so the renderer can fade / hide based on
+// playback time. Each segment is independent of color binning so vario
+// mode and single mode share the same structure.
+function buildPathData() {
+  if (N < 2) return [];
+  const sub = Math.max(1, state.smoothSubdiv);
+  const data = new Array(N - 1);
+  const useVario = state.colorMode !== 'single';
+  for (let i = 0; i < N - 1; i++) {
+    const path = new Array(sub + 1);
+    for (let s = 0; s <= sub; s++) path[s] = splineSample(i, s / sub);
+    const color = useVario
+      ? varioColor(binToVario(varioBin(smoothedVario(i))))
+      : state.singleColor;
+    data[i] = { path, color, tStart: tMs[i], tEnd: tMs[i + 1] };
+  }
+  return data;
+}
+
+// Per-segment alpha as a function of playback time. The pilot is at
+// state.currentMs. Segments behind the pilot stay fully opaque for the
+// "fresh" window then fade linearly to zero over state.trailFadeSec.
+// Segments ahead of the pilot are either hidden (state.showFuture=false)
+// or rendered as a soft "preview" at FUTURE_ALPHA.
+// The boundary segment that contains the pilot is treated as just-flown
+// so there is no visible step at the marker as it crosses each fix.
+function segmentAlpha(tStart, tEnd) {
+  // "Show all" mode: every segment renders fully bright regardless of
+  // playback position or fade window. Used by the bottom-bar toggle.
+  if (state.showFuture) return 255;
+  const now = state.currentMs;
+  if (tEnd <= now) {
+    const fade = state.trailFadeSec;
+    if (fade <= 0) return 255;
+    const ageSec = (now - tEnd) / 1000;
+    if (ageSec >= fade) return 0;
+    return Math.round(255 * (1 - ageSec / fade));
+  }
+  // Both fully-future segments AND the boundary segment that contains
+  // the pilot are hidden here. The boundary segment's past portion is
+  // covered by the dynamic "tip" layer built in buildPathLayers so the
+  // visible trail ends exactly under the pilot marker -- otherwise the
+  // boundary's full fix-to-fix geometry overshoots the arrow by up to
+  // one fix gap (often several seconds with low-rate IGC).
+  return 0;
+}
+
+// Cache only the heavy spline data (recomputed on settings changes that
+// affect geometry / colour). Layers themselves are cheap JS objects --
+// we recreate them every frame so deck.gl's updateTriggers can re-run
+// getColor for live fade/hide without re-uploading vertex positions.
+let pathDataCache = null;
+let pathDataSig   = '';
+function getPathData() {
+  const sig = state.altSrc + '|' + state.exag.toFixed(2) +
+              '|' + state.altOffset.toFixed(1) +
+              '|' + state.colorMode +
+              '|u' + state.varioMaxUp + 'd' + state.varioMaxDown +
+              '|s' + state.smoothSubdiv +
+              '|t' + state.smoothTension.toFixed(2) +
+              '|n' + N;
+  if (pathDataCache && sig === pathDataSig) return pathDataCache;
+  pathDataSig   = sig;
+  pathDataCache = buildPathData();
+  return pathDataCache;
+}
+
+// Build a one-segment "tip" path that follows the spline from the last
+// passed fix up to exactly state.currentMs. Returns null when the
+// pilot is at either flight bound, or when showFuture is on (whole
+// track already visible). Recomputed each frame -- cost is at most
+// (sub+1) splineSample calls (typically 7 with sub=6).
+function buildTipData(data) {
+  if (state.showFuture || N < 2) return null;
+  const now = state.currentMs;
+  if (!(now > tMs[0] && now < tMs[N - 1])) return null;
+  const iCur = findIdx(now);
+  if (iCur < 0 || iCur >= N - 1) return null;
+  const t0 = tMs[iCur], t1 = tMs[iCur + 1];
+  const uMax = (now - t0) / (t1 - t0);
+  if (!(uMax > 1e-6)) return null;
+  const sub = Math.max(1, state.smoothSubdiv);
+  const tipSub = Math.max(1, Math.ceil(sub * uMax));
+  const path = new Array(tipSub + 1);
+  for (let s = 0; s <= tipSub; s++) {
+    path[s] = splineSample(iCur, (s / tipSub) * uMax);
+  }
+  return [{
+    path,
+    color: data[iCur].color,
+    tStart: t0,
+    tEnd: now,           // segmentAlpha treats this as just-flown
+  }];
+}
+
+// Drop segments whose alpha is zero so they are neither drawn nor written
+// into the depth buffer. Invisible future / faded segments were still
+// occupying depth and occluding the pilot marker and the visible trail.
+function visiblePathData(data) {
+  return data.filter(d => segmentAlpha(d.tStart, d.tEnd) > 0);
+}
+
+function buildPathLayers() {
+  const data = getPathData();
+  if (!data.length) return [];
+  const COLOR_TRIGGER = [
+    state.currentMs, state.showFuture, state.trailFadeSec,
+  ];
+  const visible = visiblePathData(data);
+  const tipData = buildTipData(data);
+  const layers = [];
+
+  // Pixel-width "spine" -- billboard so it's always visible from any angle
+  // (edge-on, top-down, side). Thin segments don't show the rectangle
+  // artifact that thick billboard ribbons suffer from.
+  layers.push(new deck.PathLayer({
+    id: 'track-px',
+    data: visible,
+    getPath: d => d.path,
+    getColor: d => {
+      const a = segmentAlpha(d.tStart, d.tEnd);
+      return [d.color[0], d.color[1], d.color[2], a];
+    },
+    getWidth: state.trackWidth,
+    widthUnits: 'pixels',
+    widthMinPixels: 1, widthMaxPixels: 80,
+    billboard: true,
+    capRounded: true,
+    jointRounded: true,
+    parameters: { depthTest: true, depthMask: true },
+    updateTriggers: {
+      getColor: COLOR_TRIGGER,
+      getWidth: state.trackWidth,
+    },
+  }));
+
+  if (tipData) {
+    layers.push(new deck.PathLayer({
+      id: 'track-px-tip',
+      data: tipData,
+      getPath: d => d.path,
+      getColor: d => {
+        const a = segmentAlpha(d.tStart, d.tEnd);
+        return [d.color[0], d.color[1], d.color[2], a];
+      },
+      getWidth: state.trackWidth,
+      widthUnits: 'pixels',
+      widthMinPixels: 1, widthMaxPixels: 80,
+      billboard: true,
+      capRounded: true,
+      jointRounded: true,
+      parameters: { depthTest: true, depthMask: true },
+    }));
+  }
+
+  // Optional world-meters ribbon: gives a true 3D volumetric look. The
+  // ribbon is flat (PathLayer can't extrude tubes) but together with the
+  // billboard spine the track reads as a 3D body from top-down and oblique
+  // angles, while remaining visible edge-on via the spine.
+  if (state.tube3d > 0) {
+    layers.push(new deck.PathLayer({
+      id: 'track-3d',
+      data: visible,
+      getPath: d => d.path,
+      getColor: d => {
+        const a = segmentAlpha(d.tStart, d.tEnd);
+        // 3D ribbon was previously at fixed 180 alpha. Scale that ceiling
+        // by the live fade fraction so the ribbon fades together with
+        // the spine.
+        return [d.color[0], d.color[1], d.color[2], Math.round(a * 180 / 255)];
+      },
+      getWidth: state.tube3d,
+      widthUnits: 'meters',
+      widthMinPixels: 0, widthMaxPixels: 200,
+      billboard: false,
+      capRounded: true,
+      jointRounded: true,
+      parameters: { depthTest: true, depthMask: false },
+      updateTriggers: {
+        getColor: COLOR_TRIGGER,
+        getWidth: state.tube3d,
+      },
+    }));
+    if (tipData) {
+      layers.push(new deck.PathLayer({
+        id: 'track-3d-tip',
+        data: tipData,
+        getPath: d => d.path,
+        getColor: d => {
+          const a = segmentAlpha(d.tStart, d.tEnd);
+          return [d.color[0], d.color[1], d.color[2], Math.round(a * 180 / 255)];
+        },
+        getWidth: state.tube3d,
+        widthUnits: 'meters',
+        widthMinPixels: 0, widthMaxPixels: 200,
+        billboard: false,
+        capRounded: true,
+        jointRounded: true,
+        parameters: { depthTest: true, depthMask: false },
+      }));
+    }
+  }
+
+  // Spiral reconstruction overlay -- drawn on top of the regular track so
+  // the helix is visible against the original sample-through spline.
+  for (const L of buildSpiralLayers()) layers.push(L);
+
+  return layers;
+}
+// Meters per screen pixel at the given latitude and Web-Mercator zoom.
+// Used so the pilot marker keeps a constant screen size regardless of how
+// far the user has zoomed -- otherwise a 30 m polygon vanishes to a few
+// pixels at fit-track zoom and looks huge at street-level zoom.
+function mPerPx(lat, zoom) {
+  return 156543.03 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+}
+
+function buildPilotLayers(pos, headingDeg) {
+  const s   = state.pilotSize;
+  const mpp = map ? mPerPx(pos[1], map.getZoom()) : 1;
+
+  if (state.pilotShape === 'cylinder') {
+    // True 3-D marker: white inner body + magenta outer band + red wedge.
+    // Constant on-screen size via mPerPx; wedge base on the forward edge.
+    return buildPilotCylinderLayers(pos, headingDeg, s, mpp);
+  }
+
+  if (state.pilotShape === 'wing') {
+    // Paraglider canopy seen from above:
+    //   * wingspan -- the LONG axis -- runs perpendicular to the flight
+    //     direction, i.e. along local mesh +X
+    //   * chord    -- the SHORT axis -- runs along the flight direction,
+    //     i.e. along local mesh +Y
+    // ellipseXY(halfX, halfY, ...) so halfX is half-wingspan, halfY is
+    // half-chord. Target on-screen footprint at pilotSize=1:
+    //   wingspan ~44 px (long axis, perpendicular to flight)
+    //   chord    ~13 px (short axis, along flight)
+    const halfSpan  = 22  * s * mpp;
+    const halfChord = 6.5 * s * mpp;
+    const wing = pilotPolygon(pos[0], pos[1], pos[2], headingDeg,
+                              ellipseXY(halfSpan, halfChord, 48));
+    return [pilotSubLayer('pilot-wing', wing, PILOT_RED, PILOT_WHITE, 2)];
+  }
+
+  // 'arrow' shape: a white-filled circle with a thick black ring marks
+  // the pilot position (high-contrast against any basemap), and a small
+  // red triangle pokes forward to show heading. The triangle's base sits
+  // flush against the outer edge of the circle -- no gap.
+  // Target on-screen footprint at pilotSize=1:
+  //   circle radius  ~7  px
+  //   triangle tip   ~21 px forward of pilot center
+  //   triangle base   8  px wide
+  const r       =  7 * s * mpp;     // circle radius
+  const triBack =  r;               // triangle base exactly at the circle's edge
+  const triTip  =  r + 14 * s * mpp;
+  const triHalf =  4 * s * mpp;
+
+  const circle = pilotPolygon(pos[0], pos[1], pos[2], headingDeg,
+                              discXY(r, 32));
+  const tri = pilotPolygon(pos[0], pos[1], pos[2], headingDeg, [
+    [        0, triTip ],
+    [ -triHalf, triBack],
+    [  triHalf, triBack],
+  ]);
+  return [
+    // Triangle first so the circle's ring overdraws the part of the base
+    // that overlaps the disc, giving a clean tangent join.
+    pilotSubLayer('pilot-tri',    tri,    PILOT_RED,   PILOT_WHITE, 1.5),
+    pilotSubLayer('pilot-circle', circle, PILOT_WHITE, PILOT_BLACK, 3),
+  ];
+}
+function pushLayers(pilotPos, heading) {
+  if (!overlay) return;
+  overlay.setProps({
+    layers: [...buildPathLayers(), ...buildPilotLayers(pilotPos, heading)],
+  });
+}
+
+// ============================================================================
+//  Pilot interpolation
+// ============================================================================
+function pilotAt(ms) {
+  if (N === 0) return [0, 0, 0];
+  if (ms <= T0) return [fixes[0].lon, fixes[0].lat, altDisplay(fixes[0])];
+  if (ms >= T1) return [fixes[N-1].lon, fixes[N-1].lat, altDisplay(fixes[N-1])];
+  let lo = 0, hi = N - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (tMs[mid] <= ms) lo = mid; else hi = mid - 1;
+  }
+  const dt = tMs[Math.min(lo + 1, N - 1)] - tMs[lo];
+  const u  = dt > 0 ? (ms - tMs[lo]) / dt : 0;
+  // Pilot rides the same spline that the rendered track follows so the
+  // arrow always sits exactly on the visible line.
+  return splineSample(lo, u);
+}
+// Heading = bearing from a point just before the pilot to a point just
+// after, sampled on the *same* trajectory pilotAt() uses (i.e. the spline
+// when smoothing is on, the chord polyline when it is off).
+//
+// The window is intentionally tight (+/- 150 ms = 300 ms total). With the
+// old +/- 1500 ms window a 15 s thermal spiral (~24 deg/s) advanced 72
+// deg of arc inside the window, so the chord-bearing differed from the
+// true tangent by ~36 deg -- which is exactly the "wrong direction in
+// fast turns" the user was seeing. At +/- 150 ms the swept arc is ~7 deg
+// and the residual tangent error is under 2 deg, while the window is
+// still large enough to dodge GPS quantization noise.
+function pilotHeading(ms) {
+  const DT = 150;
+  const lo = Math.max(T0, ms - DT);
+  const hi = Math.min(T1, ms + DT);
+  let a = pilotAt(lo);
+  let b = pilotAt(hi);
+  // If we are right at an endpoint, grow the window in the available
+  // direction so we still get a valid tangent rather than a zero vector.
+  if (a[0] === b[0] && a[1] === b[1]) {
+    if (lo === T0) b = pilotAt(Math.min(T1, ms + 2 * DT));
+    else           a = pilotAt(Math.max(T0, ms - 2 * DT));
+    if (a[0] === b[0] && a[1] === b[1]) return 0;
+  }
+  return bearingDeg(a[1], a[0], b[1], b[0]);
+}
+function findIdx(ms) {
+  if (N === 0) return 0;
+  if (ms <= T0) return 0;
+  if (ms >= T1) return N - 1;
+  let lo = 0, hi = N - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (tMs[mid] <= ms) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+// ============================================================================
+//  Combined chart
+// ============================================================================
+let chartReady = false;
+function vline(t) {
+  return { type: 'line', x0: t, x1: t, yref: 'paper', y0: 0, y1: 1,
+           line: { color: '#ef4444', width: 1.5 } };
+}
+// Convert real epoch ms -> ISO string whose UTC components are the
+// launch site's local time. Used for everything passed to Plotly so
+// that date-axis tick formatting (always UTC in Plotly 2.x) displays
+// the launch local clock unambiguously.
+function tShiftIso(ms) {
+  return new Date(ms + tzOffsetMin * 60000).toISOString();
+}
+
+function refreshChart() {
+  if (!chartReady || N === 0) return;
+  // Times are tagged with the takeoff timezone via tShiftIso so the
+  // chart's clock matches the HUD regardless of the viewer's browser
+  // timezone.
+  const times = new Array(N);
+  for (let k = 0; k < N; k++) times[k] = tShiftIso(tMs[k]);
+  // Pilot altitude in display units, including the user's Alt offset so
+  // the chart matches whatever the user has dialed in to align takeoff
+  // with the DEM. Offset is the same one applied to the 3D track.
+  const altY  = fixes.map(f => U.altConv(altOf(f) + state.altOffset));
+  const i = findIdx(state.currentMs);
+
+  // Y-axis range: top = highest pilot altitude (with offset), bottom =
+  // lowest ground altitude. The ground floor is used even when the
+  // ground trace is hidden -- the axis stays anchored so toggling
+  // doesn't change the scale. Sampling kicks off eagerly so the y-axis
+  // settles to its final range as tiles arrive.
+  let maxAlt = -Infinity, minAlt = Infinity;
+  for (let k = 0; k < N; k++) {
+    const v = altY[k];
+    if (Number.isFinite(v)) {
+      if (v > maxAlt) maxAlt = v;
+      if (v < minAlt) minAlt = v;
+    }
+  }
+  if (!Number.isFinite(maxAlt)) maxAlt = 100;
+  if (!Number.isFinite(minAlt)) minAlt = 0;
+
+  sampleGroundAlt();   // always populate; cheap once cached
+  let groundY = null, minGroundDisp = NaN, maxGroundDisp = NaN;
+  if (groundAlt) {
+    let gMin = Infinity, gMax = -Infinity;
+    for (let k = 0; k < N; k++) {
+      if (Number.isNaN(groundAlt[k])) continue;
+      const v = U.altConv(groundAlt[k]);
+      if (v < gMin) gMin = v;
+      if (v > gMax) gMax = v;
+    }
+    if (Number.isFinite(gMin)) minGroundDisp = gMin;
+    if (Number.isFinite(gMax)) maxGroundDisp = gMax;
+    if (state.showGround) {
+      groundY = new Array(N);
+      for (let k = 0; k < N; k++) {
+        groundY[k] = Number.isNaN(groundAlt[k]) ? null : U.altConv(groundAlt[k]);
+      }
+    }
+  }
+
+  // y-axis range = union of pilot + ground extents. Using the union
+  // matters when terrain rises above the pilot (e.g. flying down a
+  // valley with high ridges around) -- otherwise the ground line would
+  // clip out of view above the pilot's max.
+  const yLo0 = Number.isFinite(minGroundDisp)
+    ? Math.min(minGroundDisp, minAlt) : minAlt;
+  const yHi0 = Number.isFinite(maxGroundDisp)
+    ? Math.max(maxGroundDisp, maxAlt) : maxAlt;
+  const pad = Math.max(1, (yHi0 - yLo0) * 0.05);
+  const yLo = Math.floor(yLo0 - pad);
+  const yHi = Math.ceil(yHi0 + pad);
+
+  const traces = [];
+  if (state.showAlt) traces.push({
+    x: times, y: altY, mode: 'lines', name: 'Pilot',
+    line: { color: '#60a5fa', width: 1.6 }, yaxis: 'y',
+    hovertemplate: '%{x|%H:%M:%S}<br>%{y:.1f} ' + U.altLabel() + '<extra></extra>',
+  });
+  if (state.showGround && groundY) traces.push({
+    x: times, y: groundY, mode: 'lines', name: 'Ground',
+    line: { color: '#a3712e', width: 1.4 }, yaxis: 'y',
+    fill: 'tozeroy',
+    fillcolor: 'rgba(163,113,46,0.22)',
+    hovertemplate: '%{x|%H:%M:%S}<br>%{y:.1f} ' + U.altLabel() + ' ground<extra></extra>',
+  });
+
+  const showAny = state.showAlt || state.showGround;
+  Plotly.react('chart', traces, {
+    margin: { l: 55, r: 20, t: 20, b: 36 },
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#9aa3b2', size: 11 },
+    xaxis: { type: 'date', tickformat: '%H:%M:%S',
+             hoverformat: '%H:%M:%S',
+             gridcolor: 'rgba(255,255,255,0.06)',
+             linecolor: 'rgba(255,255,255,0.15)', zeroline: false },
+    yaxis: { title: showAny ? `Alt (${U.altLabel()})` : '',
+             range: [yLo, yHi], autorange: false,
+             gridcolor: 'rgba(255,255,255,0.06)',
+             linecolor: 'rgba(255,255,255,0.15)', zeroline: false,
+             visible: showAny, color: '#cbd5e1' },
+    shapes: [vline(times[i])],
+    showlegend: state.showAlt && state.showGround,
+    legend: { x: 0.99, y: 0.98, xanchor: 'right', yanchor: 'top',
+              bgcolor: 'rgba(0,0,0,0)',
+              font: { color: '#cbd5e1', size: 10 } },
+  }, { displayModeBar: false, responsive: true });
+
+  const lbl = document.getElementById('chartLabel');
+  const parts = [];
+  if (state.showAlt)    parts.push(`Pilot alt (${state.altSrc.toUpperCase()})`);
+  if (state.showGround) parts.push('Ground alt');
+  parts.push(fmtTzLabel());
+  lbl.textContent = parts.join('  \u00b7  ');
+}
+function syncChartCursor() {
+  if (!chartReady || (!state.showAlt && !state.showGround) || N === 0) return;
+  const i = findIdx(state.currentMs);
+  const tShift = tShiftIso(tMs[i]);
+  Plotly.relayout('chart', { 'shapes[0].x0': tShift, 'shapes[0].x1': tShift });
+}
+
+// ============================================================================
+//  HUD
+// ============================================================================
+const elTime = () => document.getElementById('hTime');
+const elAlt  = () => document.getElementById('hAlt');
+const elGs   = () => document.getElementById('hGs');
+const elVz   = () => document.getElementById('hVz');
+const elDist = () => document.getElementById('hDist');
+function updateHud(i) {
+  if (N === 0) return;
+  const f = fixes[i];
+  elTime().textContent = fmtLocalHMS(tMs[i]) + ' ' + fmtTzLabel();
+  // Surface the IANA name when we have it so the user can tell at a
+  // glance whether DST was applied. Falls back to a hint otherwise.
+  const row = elTime().parentElement;
+  if (row) {
+    row.title = tzName
+      ? `Local time at takeoff (${tzName}, DST-aware via Intl).`
+      : 'Local time estimated from launch longitude (no DST -- offline or tz-lookup unavailable).';
+  }
+  elAlt().textContent  = `${U.altConv(altOf(f)).toFixed(0)} ${U.altLabel()}`;
+  elGs().textContent   = `${U.gsConv(f.gs_kmh).toFixed(1)} ${U.gsLabel()}`;
+  elVz().textContent   = `${(f.vz_ms >= 0 ? '+' : '')}${U.vzConv(f.vz_ms).toFixed(U.vzPrec())} ${U.vzLabel()}`;
+  elDist().textContent = `${U.distConv(cumKm[i]).toFixed(2)} ${U.distLabel()}`;
+}
+
+// ============================================================================
+//  Transport
+// ============================================================================
+const ICON_PLAY  = '<path d="M8 5v14l11-7z"/>';
+const ICON_PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+function fmtSec(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec - h * 3600) / 60);
+  const s = sec - h * 3600 - m * 60;
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+function syncProgressUi() {
+  if (N === 0) return;
+  const progSlider = document.getElementById('progress');
+  document.getElementById('progDur').textContent = fmtSec((T1 - T0) / 1000);
+  progSlider.value = ((state.currentMs - T0) / (T1 - T0)) * 100;
+  document.getElementById('progTime').textContent = fmtSec((state.currentMs - T0) / 1000);
+  document.getElementById('playIcon').innerHTML = state.playing ? ICON_PAUSE : ICON_PLAY;
+}
+function setPlaying(p) {
+  state.playing = p;
+  document.getElementById('playIcon').innerHTML = p ? ICON_PAUSE : ICON_PLAY;
+  if (p) {
+    lastFrame = performance.now();
+  }
+}
+function seekToMs(ms) {
+  state.currentMs = Math.max(T0, Math.min(T1, ms));
+  syncProgressUi();
+  syncChartCursor();
+}
+
+// ============================================================================
+//  Animation
+// ============================================================================
+let lastFrame = performance.now();
+let lastChartUpdate = 0;
+function tick(nowMs) {
+  // Wrap the per-frame body so any unexpected runtime error in a layer
+  // builder, HUD update, or chart sync does not silently halt the
+  // animation loop -- otherwise playback "freezes" with no visible cause.
+  // The next frame is always scheduled, even on error.
+  try {
+    if (mapReady && N > 0) {
+      const dt = Math.min(100, nowMs - lastFrame);
+      if (state.playing) {
+        state.currentMs += dt * state.speed;
+        if (state.currentMs > T1) state.currentMs = T0;
+      }
+      const pos = pilotAt(state.currentMs);
+      const head = pilotHeading(state.currentMs);
+      pushLayers(pos, head);
+      const i = findIdx(state.currentMs);
+      updateHud(i);
+      if (state.follow) centerOnPilotFrame(pos);
+      syncProgressUi();
+      if (nowMs - lastChartUpdate > 100) {
+        lastChartUpdate = nowMs;
+        syncChartCursor();
+      }
+    }
+  } catch (e) {
+    // Throttle: only log the first error per second so a recurring fault
+    // doesn't drown the console.
+    if (!tick._lastErr || nowMs - tick._lastErr > 1000) {
+      tick._lastErr = nowMs;
+      console.error('[tick] frame failed:', e);
+    }
+  }
+  lastFrame = nowMs;
+  requestAnimationFrame(tick);
+}
+
+// ============================================================================
+//  Settings + toggles (wired only once on first map init via setupAppUi)
+// ============================================================================
+let appUiWired = false;
+function setupAppUi() {
+  if (appUiWired) return;
+  appUiWired = true;
+
+  const settingsEl = document.getElementById('settings');
+  const settingsFab = document.getElementById('settingsFab');
+  let settingsOpen = false;
+  function setSettings(open) {
+    settingsOpen = open;
+    settingsEl.classList.toggle('hidden', !open);
+  }
+  settingsFab.onclick = () => setSettings(!settingsOpen);
+  document.getElementById('closeSettings').onclick = () => setSettings(false);
+
+  function initToggle(id, key, onChange) {
+    const root = document.getElementById(id);
+    for (const btn of root.querySelectorAll('button')) {
+      if (btn.dataset.v === state[key]) btn.classList.add('active');
+      btn.addEventListener('click', () => {
+        state[key] = btn.dataset.v;
+        for (const b of root.querySelectorAll('button')) b.classList.remove('active');
+        btn.classList.add('active');
+        onChange();
+      });
+    }
+  }
+  initToggle('altSrc', 'altSrc', () => { pathDataCache = null; spiralCache = null; refreshChart(); autoAlignGround(); });
+  initToggle('units',  'units',  () => refreshChart());
+  initToggle('base',   'base',   () => {
+    map.setLayoutProperty('sat', 'visibility', state.base === 'sat' ? 'visible' : 'none');
+    map.setLayoutProperty('osm', 'visibility', state.base === 'osm' ? 'visible' : 'none');
+  });
+
+  initToggle('colorMode', 'colorMode', () => { pathDataCache = null; updateColorRows(); });
+  initToggle('pilotShape', 'pilotShape', () => {});  // re-read every frame in tick
+
+  const pilotSizeSlider = document.getElementById('pilotSize');
+  const pilotSizeV      = document.getElementById('pilotSizeV');
+  pilotSizeSlider.addEventListener('input', e => {
+    state.pilotSize = parseFloat(e.target.value);
+    pilotSizeV.textContent = state.pilotSize.toFixed(1) + '\u00d7';
+  });
+  function updateColorRows() {
+    const show = state.colorMode === 'vario';
+    document.getElementById('rowMaxUp').style.opacity   = show ? '' : '0.4';
+    document.getElementById('rowMaxDown').style.opacity = show ? '' : '0.4';
+  }
+  updateColorRows();
+
+  function pairSliderNumber(sliderId, numId, key, lo, hi) {
+    const sl = document.getElementById(sliderId), nu = document.getElementById(numId);
+    function apply(v) {
+      const c = Math.max(lo, Math.min(hi, v));
+      state[key] = c;
+      sl.value = c; nu.value = c;
+      pathDataCache = null;
+    }
+    sl.addEventListener('input', e => apply(parseFloat(e.target.value)));
+    nu.addEventListener('input', e => {
+      const v = parseFloat(e.target.value); if (!isNaN(v)) apply(v);
+    });
+  }
+  pairSliderNumber('maxUp',   'maxUpN',   'varioMaxUp',   0.1, 50);
+  pairSliderNumber('maxDown', 'maxDownN', 'varioMaxDown', 0.1, 50);
+
+  document.getElementById('followCam').addEventListener('change', e => {
+    setFollow(e.target.checked);
+  });
+  document.getElementById('swapButtons').addEventListener('change', e => {
+    setSwapButtons(e.target.checked);
+  });
+
+  // ----- Unified drag dispatch ------------------------------------------
+  // Combines: (a) follow-mode orbit/exit gestures, (b) optional left/right
+  // mouse-button swap (state.swapButtons), so the same code path covers
+  // every combination of those two toggles.
+  //
+  // Default mapping (no swap):     left = pan, right = rotate.
+  // Swapped:                       left = rotate, right = pan.
+  // In FOLLOW mode the "pan" slot becomes "exit follow"; the "rotate"
+  // slot becomes "orbit" (turns the camera around the pilot while
+  // centerOnPilotFrame() keeps the pilot glued to the viewport center).
+  // Middle-wheel zoom is untouched and always uses the wheel handler
+  // installed below.
+  //
+  // Why a unified custom handler instead of toggling MapLibre's own:
+  // MapLibre's DragRotateHandler is hard-wired to the right button (and
+  // ctrl+left), with no public API to retarget it; the same goes for
+  // DragPanHandler and the left button. The cleanest way to swap is to
+  // disable both built-in handlers whenever we need to deviate (follow
+  // mode OR swap mode) and run our own pan + rotate loops here.
+  //
+  // Capture-phase listeners + setPointerCapture() are required so we win
+  // the gesture from pixel zero -- otherwise MapLibre's own listeners
+  // race ours and the camera "sticks" after a few pixels.
+
+  function refreshMapDragHandlers() {
+    if (!map) return;
+    const intercept = state.swapButtons || state.follow;
+    if (intercept) {
+      map.dragPan.disable();
+      map.dragRotate.disable();
+    } else {
+      map.dragPan.enable();
+      map.dragRotate.enable();
+    }
+    if (map.touchZoomRotate) {
+      if (state.follow) map.touchZoomRotate.disableRotation();
+      else              map.touchZoomRotate.enableRotation();
+    }
+  }
+
+  function setFollow(on) {
+    state.follow = on;
+    document.getElementById('followCam').checked = on;
+    if (!on) dragState = null;
+    refreshMapDragHandlers();
+  }
+  window._setFollowPilot = setFollow;
+
+  function setSwapButtons(on) {
+    state.swapButtons = on;
+    const cb = document.getElementById('swapButtons');
+    if (cb) cb.checked = on;
+    // If we're leaving custom-drag territory, drop any in-flight gesture
+    // so it doesn't carry over into the now-MapLibre-owned phase.
+    if (!on && !state.follow) dragState = null;
+    refreshMapDragHandlers();
+  }
+
+  // dragState shape:
+  //   { pointerId, mode: 'pan' | 'rotate' | 'orbit',
+  //     x0, y0,                  // start position (rotate/orbit deltas)
+  //     bearing0, pitch0,        // camera state at drag start
+  //     lastX, lastY }           // for incremental pan deltas
+  let dragState = null;
+
+  // Sign convention: drag right -> bearing increases (camera orbits
+  // clockwise around the pilot). Pitch follows vertical motion: drag
+  // down -> look further down (pitch decreases). Capped at 75deg --
+  // same as map.maxPitch; closer to horizon the screen-to-ground
+  // unproject becomes singular and the camera can fly off.
+  const ORBIT_DEG_PER_PX_X = 0.4;
+  const ORBIT_DEG_PER_PX_Y = 0.4;
+
+  // Custom pan / orbit gestures attach to the map CANVAS only -- never to
+  // #mapContainer / .maplibregl-map. The container subtree also holds
+  // NavigationControl (+/-), compass, fullscreen, and AppControl; a capture
+  // listener on the container was swallowing those button clicks.
+  let mapGesturesWired = false;
+
+  function wireMapGestures() {
+    if (mapGesturesWired || !map) return;
+    const canvas = map.getCanvas && map.getCanvas();
+    if (!canvas) return;
+    mapGesturesWired = true;
+
+    function startCustomDrag(e, mode) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      dragState = {
+        pointerId: e.pointerId,
+        mode,
+        x0: e.clientX, y0: e.clientY,
+        bearing0: map.getBearing(),
+        pitch0:   map.getPitch(),
+        lastX: e.clientX, lastY: e.clientY,
+      };
+    }
+
+    canvas.addEventListener('pointerdown', e => {
+      if (e.button !== 0 && e.button !== 2) return;
+
+      const isLeft     = (e.button === 0);
+      const basePan    = isLeft !== state.swapButtons;
+      const baseAction = basePan ? 'pan' : 'rotate';
+
+      if (state.follow) {
+        if (baseAction === 'pan') {
+          setFollow(false);
+          if (state.swapButtons) startCustomDrag(e, 'pan');
+          return;
+        }
+        startCustomDrag(e, 'orbit');
+        return;
+      }
+
+      if (state.swapButtons) startCustomDrag(e, baseAction);
+    }, { capture: true });
+
+    canvas.addEventListener('pointermove', e => {
+      if (!dragState || e.pointerId !== dragState.pointerId) return;
+
+      if (dragState.mode === 'rotate' || dragState.mode === 'orbit') {
+        const dx = e.clientX - dragState.x0;
+        const dy = e.clientY - dragState.y0;
+        map.setBearing(dragState.bearing0 + dx * ORBIT_DEG_PER_PX_X);
+        map.setPitch(
+          Math.max(0, Math.min(75, dragState.pitch0 - dy * ORBIT_DEG_PER_PX_Y))
+        );
+      } else if (dragState.mode === 'pan') {
+        const dx = e.clientX - dragState.lastX;
+        const dy = e.clientY - dragState.lastY;
+        if (dx !== 0 || dy !== 0) {
+          const cScreen   = map.project(map.getCenter());
+          const newCenter = map.unproject([cScreen.x - dx, cScreen.y - dy]);
+          map.jumpTo({ center: newCenter });
+          dragState.lastX = e.clientX;
+          dragState.lastY = e.clientY;
+        }
+      }
+      e.preventDefault();
+    }, { capture: true });
+
+    function endDrag(e) {
+      if (!dragState || e.pointerId !== dragState.pointerId) return;
+      try { canvas.releasePointerCapture(dragState.pointerId); } catch (_) {}
+      dragState = null;
+    }
+    canvas.addEventListener('pointerup',     endDrag, { capture: true });
+    canvas.addEventListener('pointercancel', endDrag, { capture: true });
+    window.addEventListener('pointerup',     endDrag);
+    window.addEventListener('pointercancel', endDrag);
+
+    canvas.addEventListener('contextmenu', e => {
+      if (state.follow || state.swapButtons) e.preventDefault();
+    });
+
+    // Follow mode: centre-anchored wheel / trackpad zoom on the map canvas.
+    // Use delta-scaled steps (not fixed 0.4 per event) so touchpad bursts
+    // are much gentler than before.
+    const FOLLOW_WHEEL_ZOOM = 0.0010;
+    canvas.addEventListener('wheel', e => {
+      if (!state.follow) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      const z = map.getZoom() - e.deltaY * FOLLOW_WHEEL_ZOOM;
+      map.setZoom(Math.max(0, Math.min(22, z)), { animate: false });
+    }, { capture: true, passive: false });
+  }
+
+  // Apply default swap state (left = rotate, right = pan) on first init.
+  setSwapButtons(state.swapButtons);
+  window._wireMapGestures = wireMapGestures;
+  if (map && map.loaded && map.loaded()) {
+    configureMapZoom();
+    wireMapGestures();
+  } else if (map) {
+    map.once('load', () => { configureMapZoom(); wireMapGestures(); });
+  }
+
+  const exagSlider = document.getElementById('exag');
+  const exagV = document.getElementById('exagV');
+  exagSlider.addEventListener('input', e => {
+    state.exag = parseFloat(e.target.value);
+    exagV.textContent = state.exag.toFixed(1) + '\u00d7';
+    if (map) map.setTerrain({ source: 'terrarium', exaggeration: state.exag });
+    pathDataCache = null;
+    spiralCache = null;
+  });
+
+  const altOffSlider = document.getElementById('altOffset');
+  const altOffNum    = document.getElementById('altOffsetN');
+  function applyAltOffset(v) {
+    state.altOffset = Math.max(-2000, Math.min(2000, v));
+    altOffSlider.value = Math.max(-500, Math.min(500, state.altOffset));
+    altOffNum.value = state.altOffset;
+    pathDataCache = null;
+    spiralCache = null;
+    refreshChart();   // pilot trace shifts with offset
+  }
+  window.applyAltOffset = applyAltOffset;
+  altOffSlider.addEventListener('input', e => applyAltOffset(parseFloat(e.target.value)));
+  altOffNum.addEventListener('input', e => {
+    const v = parseFloat(e.target.value); if (!isNaN(v)) applyAltOffset(v);
+  });
+
+  const autoAlignBtn = document.getElementById('autoAlignBtn');
+  if (autoAlignBtn) {
+    autoAlignBtn.onclick = () => {
+      autoAlignGround();
+    };
+  }
+
+  const trackWSlider = document.getElementById('trackW');
+  const trackWV      = document.getElementById('trackWV');
+  trackWSlider.addEventListener('input', e => {
+    state.trackWidth = parseInt(e.target.value, 10);
+    trackWV.textContent = state.trackWidth + ' px';
+    pathDataCache = null;
+  });
+
+  const tube3dSlider = document.getElementById('tube3d');
+  const tube3dV      = document.getElementById('tube3dV');
+  tube3dSlider.addEventListener('input', e => {
+    state.tube3d = parseFloat(e.target.value);
+    tube3dV.textContent = state.tube3d > 0 ? state.tube3d.toFixed(1) + ' m' : 'off';
+    pathDataCache = null;
+  });
+
+  const smoothSubSlider = document.getElementById('smoothSubdiv');
+  const smoothSubV      = document.getElementById('smoothSubdivV');
+  smoothSubSlider.addEventListener('input', e => {
+    state.smoothSubdiv = parseInt(e.target.value, 10) || 0;
+    smoothSubV.textContent = state.smoothSubdiv >= 2
+      ? state.smoothSubdiv + ' / seg'
+      : 'off';
+    pathDataCache = null;     // path will redraw on next animation frame
+  });
+
+  const smoothTenSlider = document.getElementById('smoothTension');
+  const smoothTenV      = document.getElementById('smoothTensionV');
+  smoothTenSlider.addEventListener('input', e => {
+    state.smoothTension = parseFloat(e.target.value);
+    if (!isFinite(state.smoothTension)) state.smoothTension = 1.0;
+    smoothTenV.textContent = state.smoothTension.toFixed(1) + '\u00d7';
+    pathDataCache = null;
+  });
+
+  const kmlRateSlider = document.getElementById('kmlRateHz');
+  const kmlRateV      = document.getElementById('kmlRateHzV');
+  kmlRateSlider.addEventListener('input', e => {
+    state.kmlRateHz = parseInt(e.target.value, 10) || 4;
+    kmlRateV.textContent = state.kmlRateHz + ' Hz';
+    if (loadedFlightData && loadedFlightData.text) {
+      const newFixes = parseFlightFile(loadedFlightData.text, loadedFlightData.filename);
+      if (newFixes.length > 0) {
+        fixes = newFixes;
+        recomputeFromFixes();
+        pathDataCache = null;
+        spiralCache = null;
+        state.currentMs = T0;
+        syncProgressUi();
+        refreshChart();
+      }
+    }
+  });
+
+  // ---------------- Spiral reconstruction overlay -----------------
+  const spiralReconTog = document.getElementById('spiralRecon');
+  const spiralModeTog  = document.getElementById('spiralMode');
+  const rowSpiralMode  = document.getElementById('rowSpiralMode');
+  const rowSpiralTPS   = document.getElementById('rowSpiralTPS');
+  const rowSpiralThr   = document.getElementById('rowSpiralThr');
+  const rowSpiralMan   = document.getElementById('rowSpiralManual');
+  const rowSpiralStat  = document.getElementById('rowSpiralStatus');
+
+  function fmtTimePDT(ms) {
+    if (!ms) return '--:--:--';
+    return fmtLocalHMS(ms);
+  }
+  function refreshSpiralStatus() {
+    const el = document.getElementById('spiralStatus');
+    const tpsEl = document.getElementById('spiralTPSV');
+    // The slider readout always shows the prior in compact form; actual
+    // rendered rate is only reported on the status line below to keep
+    // the row narrow.
+    if (tpsEl) tpsEl.textContent = state.spiralTurnsPerSec.toFixed(2) + ' t/s';
+    if (!el) return;
+    const segs = state.spiralReconOn ? getSpiralRecon() : [];
+    if (!state.spiralReconOn) { el.textContent = '\u2014'; return; }
+    if (!segs.length) {
+      el.textContent = state.spiralMode === 'manual'
+        ? 'Set both range endpoints'
+        : 'No spiral above threshold';
+      return;
+    }
+    // Total rendered turns and average actual rate (snapped per pair to
+    // the nearest discrete option). May differ noticeably from the user's
+    // turns-per-sec prior because the integer hidden-turn count n is
+    // chosen per sample-pair to minimise |total - expected|.
+    let totTurns = 0, totDur = 0;
+    for (const s of segs) {
+      totTurns += s.turns;
+      totDur   += (s.tEnd - s.tStart) / 1000;
+    }
+    const actualRate = totDur > 0 ? totTurns / totDur : 0;
+    const dirs = segs.map(s => s.dir).join('+');
+    el.textContent = segs.length + ' seg, '
+      + totTurns.toFixed(1) + ' turns ' + dirs
+      + ' (avg ' + actualRate.toFixed(2) + ' t/s)'
+      + ', r\u2248' + Math.round(segs[0].radius) + ' m';
+  }
+  function refreshSpiralRowVisibility() {
+    const on = state.spiralReconOn;
+    rowSpiralMode.style.display = on ? '' : 'none';
+    rowSpiralTPS .style.display = on ? '' : 'none';
+    rowSpiralThr .style.display = on && state.spiralMode === 'auto'   ? '' : 'none';
+    rowSpiralMan .style.display = on && state.spiralMode === 'manual' ? '' : 'none';
+    rowSpiralStat.style.display = on ? '' : 'none';
+  }
+  function setSpiralActive(btnGroup, value) {
+    [...btnGroup.querySelectorAll('button')].forEach(b => {
+      b.classList.toggle('active', b.dataset.v === value);
+    });
+  }
+  setSpiralActive(spiralReconTog, state.spiralReconOn ? 'on' : 'off');
+  setSpiralActive(spiralModeTog,  state.spiralMode);
+  refreshSpiralRowVisibility();
+
+  spiralReconTog.addEventListener('click', e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    state.spiralReconOn = btn.dataset.v === 'on';
+    setSpiralActive(spiralReconTog, btn.dataset.v);
+    refreshSpiralRowVisibility();
+    spiralCache = null;
+    refreshSpiralStatus();
+  });
+  spiralModeTog.addEventListener('click', e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    state.spiralMode = btn.dataset.v;
+    setSpiralActive(spiralModeTog, btn.dataset.v);
+    refreshSpiralRowVisibility();
+    spiralCache = null;
+    refreshSpiralStatus();
+  });
+
+  const spiralTPSSlider = document.getElementById('spiralTPS');
+  spiralTPSSlider.addEventListener('input', e => {
+    state.spiralTurnsPerSec = parseFloat(e.target.value);
+    if (!isFinite(state.spiralTurnsPerSec) || state.spiralTurnsPerSec <= 0) {
+      state.spiralTurnsPerSec = 1.0;
+    }
+    spiralCache = null;
+    // refreshSpiralStatus also rewrites the per-slider value display so
+    // the user sees both the prior and the actually rendered rate.
+    refreshSpiralStatus();
+  });
+
+  const spiralThrSlider = document.getElementById('spiralThr');
+  const spiralThrV      = document.getElementById('spiralThrV');
+  spiralThrSlider.addEventListener('input', e => {
+    state.spiralThreshold = parseInt(e.target.value, 10) || 60;
+    spiralThrV.textContent = state.spiralThreshold + '\u00b0/s';
+    spiralCache = null;
+    refreshSpiralStatus();
+  });
+
+  function updateSpiralRangeLabels() {
+    document.getElementById('spiralStartV').textContent = fmtTimePDT(state.spiralManualStartMs);
+    document.getElementById('spiralEndV'  ).textContent = fmtTimePDT(state.spiralManualEndMs);
+  }
+  document.getElementById('spiralSetStart').addEventListener('click', () => {
+    state.spiralManualStartMs = state.currentMs;
+    updateSpiralRangeLabels();
+    spiralCache = null;
+    refreshSpiralStatus();
+  });
+  document.getElementById('spiralSetEnd').addEventListener('click', () => {
+    state.spiralManualEndMs = state.currentMs;
+    updateSpiralRangeLabels();
+    spiralCache = null;
+    refreshSpiralStatus();
+  });
+  document.getElementById('spiralClear').addEventListener('click', () => {
+    state.spiralManualStartMs = 0;
+    state.spiralManualEndMs   = 0;
+    updateSpiralRangeLabels();
+    spiralCache = null;
+    refreshSpiralStatus();
+  });
+  updateSpiralRangeLabels();
+  // expose so other places (file load, alt-source change) can refresh.
+  window._refreshSpiralStatus = refreshSpiralStatus;
+  // ---------- end spiral reconstruction overlay handlers ----------
+
+  // Trail-fade duration: how many seconds behind the pilot the past track
+  // stays fully bright before fading to transparent. 0 = off (no fade).
+  // Max stretches to the full loaded flight duration via
+  // updateTrailFadeMax(). Step auto-scales to ~10% of the current value
+  // (or 10 s when under a minute) so the wheel / arrow nudges feel right
+  // across the whole range.
+  // Geometry isn't affected so we don't invalidate pathDataCache; the
+  // PathLayer's updateTriggers pick up state.trailFadeSec on the next
+  // frame.
+  const trailFadeSlider = document.getElementById('trailFade');
+  const trailFadeV      = document.getElementById('trailFadeV');
+  function fmtTrailFade(s) {
+    if (!(s > 0)) return 'off';
+    s = Math.round(s);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s - h * 3600) / 60);
+    const r = s - h * 3600 - m * 60;
+    const pad = n => (n < 10 ? '0' : '') + n;
+    return h > 0 ? h + ':' + pad(m) + ':' + pad(r) : m + ':' + pad(r);
+  }
+  function trailFadeStep(v) {
+    if (v < 60) return 10;
+    return Math.max(1, Math.round(v * 0.1));
+  }
+  function applyTrailFadeStep() {
+    trailFadeSlider.step = String(trailFadeStep(state.trailFadeSec));
+  }
+  trailFadeSlider.addEventListener('input', e => {
+    let v = parseFloat(e.target.value);
+    if (!isFinite(v) || v < 0) v = 0;
+    const hi = parseFloat(trailFadeSlider.max);
+    if (isFinite(hi) && v > hi) v = hi;
+    state.trailFadeSec = v;
+    trailFadeV.textContent = fmtTrailFade(v);
+    applyTrailFadeStep();
+  });
+  trailFadeV.textContent = fmtTrailFade(state.trailFadeSec);
+  applyTrailFadeStep();
+
+  // Called from loadFlight() once T0/T1 are known: stretch the slider's
+  // upper bound to the full flight duration so "no fade across the whole
+  // flight" is reachable. Current value is clamped down if the new flight
+  // is shorter than the previously loaded one. Step is recomputed too so
+  // the wheel/arrow increment matches the (possibly) clamped value.
+  window.updateTrailFadeMax = function () {
+    if (!(T1 > T0)) return;
+    const total = Math.max(10, Math.ceil((T1 - T0) / 1000));
+    trailFadeSlider.max = String(total);
+    if (state.trailFadeSec > total) {
+      state.trailFadeSec = total;
+      trailFadeSlider.value = String(total);
+      trailFadeV.textContent = fmtTrailFade(total);
+    }
+    applyTrailFadeStep();
+  };
+
+  // ----- Universal slider/number ergonomics -----
+  // * Double-click  -> restore the control's data-default value
+  // * Mouse wheel   -> nudge by `step` (Shift = x10, Ctrl = x100)
+  // Both fire a synthetic 'input' event so the bound state handler runs
+  // exactly as if the user had dragged the slider, with no per-slider
+  // wiring needed.
+  function dispatchInput(el) {
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  function clampToInput(el, v) {
+    const lo = parseFloat(el.min); if (!isNaN(lo)) v = Math.max(lo, v);
+    const hi = parseFloat(el.max); if (!isNaN(hi)) v = Math.min(hi, v);
+    return v;
+  }
+  for (const el of settingsEl.querySelectorAll('input[type=range], input[type=number]')) {
+    if (el.dataset.default !== undefined) {
+      el.addEventListener('dblclick', () => {
+        el.value = el.dataset.default;
+        dispatchInput(el);
+      });
+    }
+    el.addEventListener('wheel', e => {
+      // Only steal the wheel when the user is actually hovering this input.
+      e.preventDefault();
+      e.stopPropagation();
+      const step = parseFloat(el.step) || 1;
+      const mult = e.ctrlKey ? 100 : (e.shiftKey ? 10 : 1);
+      const dir  = e.deltaY < 0 ? 1 : -1;     // wheel up = increase
+      const curr = parseFloat(el.value) || 0;
+      // Round to the step grid to dodge floating-point drift (0.1 + 0.1 ...).
+      const raw  = curr + dir * step * mult;
+      const snap = Math.round(raw / step) * step;
+      el.value = clampToInput(el, snap);
+      dispatchInput(el);
+    }, { passive: false });
+  }
+
+  document.getElementById('centerStart').onclick = centerStart;
+  document.getElementById('fitTrack2').onclick   = () => fitTrack();
+
+  // Reusable drag helper. The panel becomes the draggable element; if no
+  // explicit handle is passed, the whole panel is the handle but mousedowns
+  // on interactive children (buttons, inputs, sliders, the speed select,
+  // the toggle widgets) pass through untouched -- so a draggable bar that
+  // *contains* controls still lets the controls work normally.
+  //
+  // The first time the user drags, the panel's existing width/height are
+  // pinned to preserve its current layout, then it switches from any
+  // right/bottom anchoring to plain left/top positioning so future moves
+  // are pure translations.
+  function makeDraggable(panel, handle) {
+    handle = handle || panel;
+    const passThrough = 'button, input, select, .tbtn, .toggle';
+    let drag = false, sx, sy, sl, st;
+    function onDown(e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      if (handle === panel && e.target.closest(passThrough)) return;
+      const r = panel.getBoundingClientRect();
+      const p = panel.parentElement.getBoundingClientRect();
+      // Pin size BEFORE clearing right/bottom so the panel doesn't snap to
+      // its content width when the right-anchor is released.
+      if (!panel.dataset.dragInit) {
+        panel.style.width  = r.width  + 'px';
+        panel.style.height = r.height + 'px';
+        panel.dataset.dragInit = '1';
+      }
+      sl = r.left - p.left; st = r.top - p.top;
+      panel.style.right = 'auto'; panel.style.bottom = 'auto';
+      panel.style.left = sl + 'px'; panel.style.top = st + 'px';
+      drag = true; sx = e.clientX; sy = e.clientY;
+      e.preventDefault();
+    }
+    function onMove(e) {
+      if (!drag) return;
+      const p = panel.parentElement.getBoundingClientRect();
+      const pw = panel.offsetWidth, ph = panel.offsetHeight;
+      sl = Math.max(0, Math.min(p.width - pw, sl + e.clientX - sx));
+      st = Math.max(0, Math.min(p.height - ph, st + e.clientY - sy));
+      sx = e.clientX; sy = e.clientY;
+      panel.style.left = sl + 'px'; panel.style.top = st + 'px';
+    }
+    function onUp() { drag = false; }
+    handle.addEventListener('mousedown', onDown);
+    handle.addEventListener('touchstart', e => onDown(e.touches[0]), { passive: false });
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('touchmove', e => { if (drag) onMove(e.touches[0]); }, { passive: true });
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchend', onUp);
+  }
+  makeDraggable(document.getElementById('hud'), document.querySelector('#hud header'));
+  makeDraggable(document.getElementById('bottomBar'));
+  makeDraggable(
+    document.getElementById('chartPanel'),
+    document.querySelector('#chartPanel .head')
+  );
+  // CSS resize:both grows/shrinks the panel; Plotly needs an explicit
+  // resize call to redraw at the new dimensions.
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => {
+      const el = document.getElementById('chart');
+      if (el && window.Plotly && el.offsetWidth > 0 && el.offsetHeight > 0) {
+        Plotly.Plots.resize(el);
+      }
+    }).observe(document.getElementById('chartPanel'));
+  }
+
+  // Transport
+  document.getElementById('playBtn').onclick = () => setPlaying(!state.playing);
+  document.getElementById('restartBtn').onclick = () => {
+    state.currentMs = T0; setPlaying(true); syncProgressUi();
+  };
+  // Playback speed: a discrete table of 129 values.
+  //   indices  0..8   -> 0.1, 0.2, ..., 0.9   (step 0.1 below 1x)
+  //   indices  9..128 -> 1, 2, 3, ..., 120    (step 1   from 1x up)
+  // Wheel: 1 step per tick (shift = 10). Down = faster, up = slower.
+  // Clicking the value cycles through common presets; double-click on
+  // the value resets to 1x.
+  const SPEEDS = [];
+  for (let i = 1; i <= 9;   i++) SPEEDS.push(i * 0.1);
+  for (let i = 1; i <= 120; i++) SPEEDS.push(i);
+  const COMMON_SPEEDS = [0.5, 1, 2, 5, 10, 30, 60, 120];
+  const speedSlider = document.getElementById('speedSlider');
+  const speedV      = document.getElementById('speedV');
+  const speedCtl    = document.getElementById('speedCtl');
+  function speedToIndex(v) {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < SPEEDS.length; i++) {
+      const d = Math.abs(SPEEDS[i] - v);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+  function fmtSpeed(v) {
+    return (v < 1 ? v.toFixed(1) : String(Math.round(v))) + '\u00d7';
+  }
+  function applySpeedByIndex(i) {
+    i = Math.max(0, Math.min(SPEEDS.length - 1, i));
+    state.speed = SPEEDS[i];
+    speedSlider.value = i;
+    speedV.textContent = fmtSpeed(state.speed);
+  }
+  applySpeedByIndex(speedToIndex(state.speed));   // initial sync from state
+  speedSlider.addEventListener('input', () => {
+    applySpeedByIndex(parseInt(speedSlider.value, 10));
+  });
+  speedCtl.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const step = e.shiftKey ? 10 : 1;
+    const dir  = e.deltaY < 0 ? -1 : 1;     // wheel down = increase
+    applySpeedByIndex(parseInt(speedSlider.value, 10) + dir * step);
+  }, { passive: false });
+
+  // Click on the value: cycle through COMMON_SPEEDS. If the current
+  // speed isn't a common one (e.g. set via wheel/slider to 7x), snap to
+  // the nearest common preset first. Debounced so a fast second click
+  // dispatched as dblclick (1x reset) cancels the pending cycle.
+  let speedClickTimer = null;
+  function cycleCommonSpeed() {
+    const cur = state.speed;
+    const matchIdx = COMMON_SPEEDS.findIndex(v => Math.abs(v - cur) < 1e-6);
+    let next;
+    if (matchIdx >= 0) {
+      next = COMMON_SPEEDS[(matchIdx + 1) % COMMON_SPEEDS.length];
+    } else {
+      let best = COMMON_SPEEDS[0], bestD = Math.abs(best - cur);
+      for (const v of COMMON_SPEEDS) {
+        const d = Math.abs(v - cur);
+        if (d < bestD) { bestD = d; best = v; }
+      }
+      next = best;
+    }
+    applySpeedByIndex(speedToIndex(next));
+  }
+  speedV.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (speedClickTimer) clearTimeout(speedClickTimer);
+    speedClickTimer = setTimeout(() => {
+      speedClickTimer = null;
+      cycleCommonSpeed();
+    }, 220);
+  });
+  speedV.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    if (speedClickTimer) { clearTimeout(speedClickTimer); speedClickTimer = null; }
+    applySpeedByIndex(speedToIndex(1));
+  });
+
+  const progSlider = document.getElementById('progress');
+  let scrubWasPlaying = false;
+  progSlider.addEventListener('mousedown', () => { scrubWasPlaying = state.playing; state.playing = false; });
+  progSlider.addEventListener('touchstart', () => { scrubWasPlaying = state.playing; state.playing = false; }, { passive: true });
+  progSlider.addEventListener('input', e => {
+    if (N === 0) return;
+    const pct = parseFloat(e.target.value);
+    state.currentMs = T0 + (pct / 100) * (T1 - T0);
+    syncChartCursor();
+    const i = findIdx(state.currentMs);
+    updateHud(i);
+    pushLayers(pilotAt(state.currentMs), pilotHeading(state.currentMs));
+  });
+  progSlider.addEventListener('mouseup', () => { if (scrubWasPlaying) setPlaying(true); });
+  progSlider.addEventListener('touchend', () => { if (scrubWasPlaying) setPlaying(true); });
+
+  // Chart toggles
+  const chartPanel = document.getElementById('chartPanel');
+  // Single chart toggle: Pilot altitude + Ground altitude live or die
+  // together. Avoids the user ending up with one trace on / one off,
+  // which made it ambiguous what "chart hidden" really meant.
+  const toggleChartBtn = document.getElementById('toggleChart');
+  function chartOn() { return state.showAlt && state.showGround; }
+  function updateChartPanel() {
+    const open = chartOn();
+    chartPanel.classList.toggle('open', open);
+    toggleChartBtn.classList.toggle('active', open);
+    if (open) {
+      refreshChart();
+      setTimeout(() => Plotly.Plots.resize('chart'), 300);
+    }
+  }
+  toggleChartBtn.onclick = () => {
+    const next = !chartOn();
+    state.showAlt = next; state.showGround = next;
+    updateChartPanel();
+  };
+
+  // Track-ahead toggle: by default only the flown portion of the track is
+  // visible; clicking this button reveals the not-yet-flown portion as a
+  // soft preview line (alpha = FUTURE_ALPHA in buildPathLayers). No
+  // geometry rebuild required -- the dynamic getColor handles it on the
+  // next render frame.
+  const toggleFutureBtn = document.getElementById('toggleFuture');
+  function updateFutureBtn() {
+    toggleFutureBtn.classList.toggle('active', state.showFuture);
+    toggleFutureBtn.title = state.showFuture
+      ? 'Return to flown-only view'
+      : 'Show full track (disable fade)';
+  }
+  toggleFutureBtn.onclick = () => {
+    state.showFuture = !state.showFuture;
+    updateFutureBtn();
+  };
+  updateFutureBtn();
+
+  // Click anywhere in chart to seek.
+  //
+  // We avoid xa.p2c() because whether it expects gd-relative or
+  // plot-area-relative pixels has changed across Plotly versions, and
+  // getting it wrong shifts the seek by ~one y-axis-margin width (often
+  // many minutes of flight time). Instead, compute the data value
+  // directly from the documented internal fields: xa._offset (plot-area
+  // left in gd-relative px), xa._length (plot-area width in px), and
+  // xa._rl (range in linear coords -- ms since epoch for a date axis,
+  // which is what seekToMs expects).
+  document.getElementById('chart').addEventListener('click', (ev) => {
+    const gd = ev.currentTarget;
+    const fl = gd._fullLayout;
+    if (!fl || !fl.xaxis) return;
+    const xa = fl.xaxis;
+    if (!xa._rl || !xa._length) return;
+    const gdRect = gd.getBoundingClientRect();
+    const pxInPlot = ev.clientX - gdRect.left - (xa._offset || 0);
+    const px = Math.max(0, Math.min(xa._length, pxInPlot));
+    const t = px / xa._length;
+    const msShifted = xa._rl[0] + t * (xa._rl[1] - xa._rl[0]);
+    if (!isFinite(msShifted)) return;
+    // The x-axis stores "fake-UTC" ms representing launch local time;
+    // convert it back to true epoch ms before seeking.
+    seekToMs(tzUnshiftMs(msShifted));
+    pushLayers(pilotAt(state.currentMs), pilotHeading(state.currentMs));
+    updateHud(findIdx(state.currentMs));
+  });
+
+  // Open another file from inside the app
+  document.getElementById('loadBtn').onclick = () => fileInput.click();
+
+  // Keyboard
+  document.addEventListener('keydown', e => {
+    const t = e.target.tagName;
+    if (t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA') return;
+    switch (e.key.toLowerCase()) {
+      case 's': setSettings(!settingsOpen); break;
+      case 'r': fitTrack(); break;
+      case 'c': centerOnPilot(); break;
+      case 'f': toggleFs(document.getElementById('map')); break;
+      case 'o': fileInput.click(); break;
+      case ' ': setPlaying(!state.playing); e.preventDefault(); break;
+    }
+  });
+
+  // Drop overlay (after first load): replace flight
+  const dropOverlay = document.getElementById('dropOverlay');
+  window.addEventListener('dragenter', e => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+      if (!document.getElementById('landing').classList.contains('hidden')) return;
+      dropOverlay.classList.add('active');
+    }
+  });
+  window.addEventListener('dragover', e => {
+    if (dropOverlay.classList.contains('active')) e.preventDefault();
+  });
+  window.addEventListener('dragleave', e => {
+    if (e.clientX === 0 && e.clientY === 0) dropOverlay.classList.remove('active');
+  });
+  window.addEventListener('drop', e => {
+    if (!document.getElementById('landing').classList.contains('hidden')) return;
+    e.preventDefault();
+    dropOverlay.classList.remove('active');
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+}
+
+// ============================================================================
+//  Camera helpers
+// ============================================================================
+// Fit the full track inside the viewport. The button-driven call defaults
+// to pitch:0 (top-down) because fitBounds geometry is only reliable on a
+// flat camera -- a tilted perspective squashes the projected bounding
+// rectangle, leaving the track visibly off-center. Initial load passes
+// pitch:65 so the opening view still feels 3D.
+function fitTrack(duration, pitch, opts) {
+  if (!map || N === 0) return;
+  opts = opts || {};
+  const pad = 0.0005;
+  if (state.follow) {
+    state.follow = false;
+    const cb = document.getElementById('followCam');
+    if (cb) cb.checked = false;
+  }
+  const p = pitch == null ? 0 : pitch;
+  const padding = opts.padding != null ? opts.padding : 80;
+  map.fitBounds(
+    [[lonMin - pad, latMin - pad], [lonMax + pad, latMax + pad]],
+    { padding, pitch: p, bearing: 0, duration: duration == null ? 600 : duration }
+  );
+  // Optional extra zoom after fit (used on first load so the track
+  // doesn't look tiny; manual Fit keeps the default padding only).
+  if (opts.zoomIn > 0) {
+    map.setZoom(Math.min(22, map.getZoom() + opts.zoomIn), { animate: false });
+  }
+}
+function centerStart() {
+  if (!map || N === 0) return;
+  map.flyTo({ center: [fixes[0].lon, fixes[0].lat],
+              zoom: 16, pitch: 65, bearing: 0, duration: 800 });
+  state.currentMs = T0; setPlaying(true); syncProgressUi();
+}
+function centerOnPilot() {
+  if (!map || N === 0) return;
+  if (window._setFollowPilot) window._setFollowPilot(!state.follow);
+}
+
+// Per-frame "follow pilot" centering -- analytical, one-shot.
+//
+// The pilot must lie on the camera's center ray for it to project to
+// screen center. At pitch P, that ray descends at angle P from vertical.
+// A pilot at height H above the terrain therefore lies horizontally
+// distance H*tan(P) BACK from the map's look-at point, in the direction
+// opposite to the camera's forward (bearing) vector. Equivalently:
+//
+//     lookAtCenter = pilotGround + H * tan(P) * forwardDir
+//
+// where forwardDir = (sin(B), cos(B)) in (lng, lat) with longitude
+// scaled by cos(lat). One setCenter call per frame, deterministic, no
+// projection round-trip -- so no oscillation.
+//
+// Previous implementation used map.panBy() driven by the deck.gl-vs-
+// MapLibre projection residual. panBy([dx, dy]) is not a screen-space
+// shift on a pitched camera; it unprojects (cx+dx, cy+dy) to a ground
+// lng/lat and recenters there. Near the horizon that unprojection is
+// singular, so each frame's correction would overshoot, then the next
+// frame's residual would overshoot the other way -- the runaway / jitter
+// the user was seeing even with playback paused.
+//
+// We subtract the terrain elevation under the pilot (if MapLibre's
+// terrain is loaded) so the H we use is true height above ground, not
+// world altitude. The terrain query already includes the exaggeration
+// factor that the pilot altitude is also scaled by, so the units match.
+function centerOnPilotFrame(pos) {
+  if (!map) return;
+  const lng_p = pos[0], lat_p = pos[1], alt_p = pos[2] || 0;
+  const c = map.getContainer();
+  const cx = c.clientWidth / 2, cy = c.clientHeight / 2;
+
+  const dk = overlay && overlay._deck;
+  const vp = dk && dk.viewManager && dk.viewManager.getViewports()[0];
+
+  // One-shot deck.gl-based centering. Ask the viewport which lng/lat at
+  // the pilot's altitude currently sits at screen center; the pilot has
+  // to be at that lng/lat for it to project to screen center. So shift
+  // the map center by the negative of (target - pilot). This works
+  // regardless of pitch, bearing, terrain exaggeration, or anything else
+  // because we are using the *same* projection deck.gl renders with --
+  // no camera-model assumptions of our own.
+  if (vp && vp.unproject) {
+    let tgt = null;
+    try { tgt = vp.unproject([cx, cy], { targetZ: alt_p }); } catch (_) {}
+    if (tgt && isFinite(tgt[0]) && isFinite(tgt[1])) {
+      const c0 = map.getCenter();
+      const newLng = c0.lng - (tgt[0] - lng_p);
+      const newLat = c0.lat - (tgt[1] - lat_p);
+      if (isFinite(newLng) && isFinite(newLat)) {
+        map.setCenter([newLng, newLat], { animate: false });
+        return;
+      }
+    }
+  }
+  // Fallback: ground-only centering. Pilot will appear above center
+  // when pitched, but the map will not drift.
+  map.setCenter([lng_p, lat_p], { animate: false });
+}
+function toggleFs(el) {
+  if (document.fullscreenElement === el) document.exitFullscreen();
+  else if (el.requestFullscreen) el.requestFullscreen();
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+}
+
+// ============================================================================
+//  File loading
+// ============================================================================
+const fileInput = document.getElementById('fileInput');
+async function loadFile(file) {
+  let text;
+  try { text = await file.text(); }
+  catch (e) { showStatus('Cannot read file: ' + e.message, true); return; }
+  const newFixes = parseFlightFile(text, file.name);
+  if (newFixes.length === 0) {
+    showStatus('Unsupported or empty file: ' + file.name, true);
+    return;
+  }
+  loadedFlightData = { text, filename: file.name };
+  loadFlight(newFixes, file.name);
+}
+fileInput.addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  if (f) loadFile(f);
+  fileInput.value = '';
+});
+document.getElementById('openBtn').onclick = () => fileInput.click();
+
+// Landing-screen drop zone
+const landingDrop = document.getElementById('landingDrop');
+const landing = document.getElementById('landing');
+landing.addEventListener('dragover', e => {
+  e.preventDefault();
+  landingDrop.classList.add('hover');
+});
+landing.addEventListener('dragleave', e => {
+  if (e.target === landing || !landing.contains(e.relatedTarget)) {
+    landingDrop.classList.remove('hover');
+  }
+});
+landing.addEventListener('drop', e => {
+  e.preventDefault();
+  landingDrop.classList.remove('hover');
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+function loadFlight(newFixes, filename) {
+  fixes = newFixes;
+  recomputeFromFixes();
+  pathDataCache = null;
+  spiralCache = null;
+
+  const rowKmlRate = document.getElementById('rowKmlRate');
+  if (rowKmlRate) {
+    const isKml = filename && filename.toLowerCase().endsWith('.kml');
+    rowKmlRate.style.display = isKml ? '' : 'none';
+  }
+  // Manual range from a previous flight no longer aligns with this one.
+  state.spiralManualStartMs = 0;
+  state.spiralManualEndMs   = 0;
+  state.currentMs = T0;
+  setPlaying(true);
+  lastFrame = performance.now();
+  document.title = filename ? `${filename} \u2014 Flight Viewer` : 'Flight Viewer';
+
+  // Hide landing on first successful load
+  landing.classList.add('hidden');
+  setTimeout(() => { landing.style.display = 'none'; }, 260);
+
+  // Init map on first load, hook up app UI
+  initMap();
+  setupAppUi();
+  if (typeof window.updateTrailFadeMax === 'function') window.updateTrailFadeMax();
+  // Kick off DEM sampling eagerly so the chart's y-axis floor is
+  // anchored to true ground min as soon as tiles arrive, whether or not
+  // the user has toggled the Ground trace on.
+  sampleGroundAlt();
+
+  const apply = () => {
+    if (!map) return;
+    pathDataCache = null;
+    // Two-stage centering:
+    //   (a) fit the track bounds at pitch 0 -- this is the only camera
+    //       orientation where map.fitBounds() reliably contains the
+    //       whole track on screen (a tilted projection shrinks the
+    //       projected bounding rectangle and leaves the track
+    //       visibly off-center).
+    //   (b) tilt back to the opening 3D view in a short ease.
+    // Follow is on by default, but fitBounds fights per-frame centering --
+    // turn it off for the initial fit, then re-enable after the tilt ease.
+    if (window._setFollowPilot) window._setFollowPilot(false);
+    map.jumpTo({ center: [centerLon, centerLat], zoom: 13, pitch: 0, bearing: 0 });
+    // Tighter padding + a little extra zoom so the opening view feels
+    // closer than the manual Fit button (padding 80).
+    fitTrack(0, 0, { padding: 36, zoomIn: 0.75 });
+    requestAnimationFrame(() => {
+      if (!map) return;
+      map.easeTo({ pitch: 65, duration: 350 });
+      setTimeout(() => {
+        if (window._setFollowPilot) window._setFollowPilot(true);
+      }, 400);
+    });
+    syncProgressUi();
+    refreshChart();
+    showStatus(`Loaded ${N} fixes \u00b7 ${((T1-T0)/60000).toFixed(1)} min`);
+  };
+  // Defer one frame so chart-panel / settings layout changes from the
+  // previous session are flushed before fitBounds reads the container
+  // size. On the very first load (mapReady = false) we still queue via
+  // pendingApply.
+  const run = () => requestAnimationFrame(apply);
+  if (mapReady) run();
+  else pendingApply = run;
+}
+
+const elStatus = document.getElementById('status');
+function showStatus(msg, isErr) {
+  elStatus.textContent = msg;
+  elStatus.classList.toggle('err', !!isErr);
+  elStatus.classList.remove('hidden');
+  clearTimeout(showStatus._t);
+  showStatus._t = setTimeout(() => elStatus.classList.add('hidden'), 3500);
+}
+
+// The viewer never auto-loads a flight -- a fresh page always starts on
+// the landing screen, waiting for a user-provided file via drag-and-drop
+// or the Open button. This keeps flight_viewer.html portable / shareable
+// without leaking whatever data was last on this machine.
+</script>
+</body>
+</html>
