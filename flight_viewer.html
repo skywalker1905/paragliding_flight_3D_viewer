@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Flight Viewer</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -36,6 +37,7 @@
                  "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
     -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
     overflow: hidden;
   }
   button { font-family: inherit; }
@@ -103,6 +105,10 @@
     border-radius: 8px !important;
     box-shadow: var(--shadow) !important;
     overflow: hidden;
+  }
+  .maplibregl-ctrl-group button.active {
+    background-color: var(--accent) !important;
+    color: #ffffff !important;
   }
   /* Keep +/- zoom, compass, fullscreen above the map canvas / deck overlay. */
   .maplibregl-control-container {
@@ -182,6 +188,10 @@
     border-radius: var(--radius); box-shadow: var(--shadow);
     backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     min-width: 230px; touch-action: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+  #hud.hidden {
+    opacity: 0; pointer-events: none; transform: scale(0.96);
   }
   #hud header {
     display: flex; align-items: center; justify-content: space-between;
@@ -260,8 +270,9 @@
     transition: transform 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
     overflow: hidden;
     resize: both;
+    pointer-events: none;
   }
-  #chartPanel.open { transform: translateY(0); }
+  #chartPanel.open { transform: translateY(0); pointer-events: auto; }
   #chartPanel .head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 6px 12px; border-bottom: 1px solid var(--bd);
@@ -270,6 +281,16 @@
     cursor: move; user-select: none;
   }
   #chart { width: 100%; height: calc(100% - 28px); }
+  #chartCursor {
+    position: absolute;
+    top: 48px; /* header height (28px) + chart top margin (20px) */
+    bottom: 36px; /* chart bottom margin (36px) */
+    width: 1.5px;
+    background: #ef4444;
+    pointer-events: none;
+    display: none;
+    z-index: 10;
+  }
 
   /* Status pill */
   #status {
@@ -299,6 +320,153 @@
 
   #fileInput { display: none; }
   .modebar-container { display: none !important; }
+
+  /* ========== Mobile / touch responsive ========== */
+  @media (max-width: 768px) {
+    /* Prevent double-tap zoom on interactive elements */
+    button, .tbtn, .toggle, input, label, .iconbtn {
+      touch-action: manipulation;
+    }
+
+    /* Landing screen */
+    #landing { padding: max(24px, env(safe-area-inset-top, 24px)) 12px; }
+    #landingCard {
+      padding: 24px 18px 20px;
+      max-width: 100%;
+    }
+    #landingCard h1 { font-size: 18px; }
+    #landingCard .sub { font-size: 12px; }
+    #landingDrop { padding: 22px 14px; }
+    #landingDrop .big { font-size: 14px; }
+
+    /* Settings -- full-width overlay on mobile */
+    #settingsFab {
+      width: 44px; height: 44px;
+      font-size: 20px;
+      top: max(12px, env(safe-area-inset-top, 0px));
+      left: max(8px, env(safe-area-inset-left, 0px));
+      z-index: 50;
+    }
+    #settings {
+      left: 0; top: 0; right: 0;
+      width: 100%; max-width: 100%;
+      max-height: 70vh;
+      border-radius: 0 0 var(--radius) var(--radius);
+      z-index: 49;
+    }
+    #settings .body { padding: 10px 12px; gap: 10px; }
+    /* Override inline width on sliders so they don't overflow */
+    #settings .body input[type="range"] {
+      width: 100px !important; max-width: 120px;
+    }
+    .row { gap: 6px; }
+    .row > .lbl { font-size: 11px; }
+    .toggle button { padding: 6px 10px; font-size: 11px; }
+
+    /* HUD -- compact, top-right but below the MapLibre nav controls */
+    #hud {
+      right: 56px;
+      top: max(12px, env(safe-area-inset-top, 0px));
+      bottom: auto;
+      min-width: 170px; max-width: 195px;
+      font-size: 11px;
+      z-index: 18;
+    }
+    #hud .body { padding: 6px 8px; gap: 2px; font-size: 11px; }
+    #hud header { padding: 5px 8px; font-size: 11px; }
+
+    /* Bottom transport bar -- 2-row compact layout */
+    #bottomBar {
+      left: 4px; right: 4px;
+      bottom: max(4px, env(safe-area-inset-bottom, 0px));
+      grid-template-columns: auto auto;
+      grid-template-rows: auto auto;
+      gap: 6px 8px;
+      padding: 6px 8px;
+    }
+    #progressGroup {
+      grid-column: 1 / -1;
+      order: 3;
+      gap: 6px;
+    }
+    #progressGroup .t { font-size: 10px; min-width: 38px; }
+    .tbtn { width: 40px; height: 40px; }
+    .tbtn.primary { width: 44px; height: 44px; }
+    .tbtn svg { width: 18px; height: 18px; }
+    #speedCtl { padding: 4px 6px; height: 36px; }
+    #speedSlider { width: 80px; }
+    #speedV { font-size: 11px; min-width: 40px; }
+
+    /* Chart panel -- full width, anchored above the bottom bar */
+    #chartPanel {
+      left: 4px; right: 4px;
+      bottom: calc(94px + env(safe-area-inset-bottom, 0px));
+      width: calc(100vw - 8px) !important;
+      height: 170px;
+      min-width: unset;
+      min-height: 60px;
+      max-width: none;
+      max-height: calc(100vh - 200px);
+      transform: translateY(calc(100% + 130px));
+      resize: vertical;
+    }
+    #chartPanel.open { transform: translateY(0); }
+
+    /* Status pill -- avoid clashing with settings gear */
+    #status {
+      right: 8px;
+      top: max(12px, env(safe-area-inset-top, 0px));
+      left: 64px;
+      font-size: 10px;
+      padding: 4px 10px;
+      max-width: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* MapLibre controls -- keep reachable */
+    .maplibregl-ctrl-top-right {
+      top: max(12px, calc(env(safe-area-inset-top, 0px) + 4px)) !important;
+      right: 8px !important;
+    }
+    .maplibregl-ctrl-bottom-right {
+      bottom: 120px !important;
+    }
+    .maplibregl-ctrl-bottom-left {
+      bottom: 120px !important;
+    }
+
+    /* Drop overlay */
+    #dropOverlay { inset: 4px; font-size: 16px; }
+    #dropOverlay .sub { font-size: 12px; }
+
+    /* Ensure range inputs have good touch targets */
+    input[type="range"] { height: 8px; }
+  }
+
+  /* Extra-small screens (phones in portrait, ≤ 480px) */
+  @media (max-width: 480px) {
+    #bottomBar {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    #bottomBar .group {
+      justify-content: center;
+    }
+    #hud {
+      max-width: 170px;
+      right: 52px;
+    }
+    #chartPanel {
+      height: 140px;
+      bottom: calc(142px + env(safe-area-inset-bottom, 0px));
+    }
+    #speedSlider { width: 60px; }
+    #settings .body input[type="range"] {
+      width: 80px !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -528,8 +696,8 @@
           <div class="ctl"><input type="checkbox" id="followCam" checked></div>
         </div>
         <div class="row">
-          <span class="lbl" title="Swap left/right mouse-button actions. Default (on): left = rotate 3D view, right = pan — better for touchpads. Off: left = pan, right = rotate. Middle-wheel zoom is unchanged.">Swap L/R mouse</span>
-          <div class="ctl"><input type="checkbox" id="swapButtons" checked></div>
+          <span class="lbl" title="Swap left/right mouse-button actions. Default (off): left = rotate 3D view, right = pan — better for touchpads. On: left = pan, right = rotate. Middle-wheel zoom is unchanged.">Swap L/R mouse</span>
+          <div class="ctl"><input type="checkbox" id="swapButtons"></div>
         </div>
         <div class="row">
           <span class="lbl">Camera</span>
@@ -543,7 +711,11 @@
 
     <div id="hud">
       <header>
-        <span>Live</span><span class="grip">&#x2630;</span>
+        <span>Live</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="grip" style="cursor: move;">&#x2630;</span>
+          <button id="closeHud" class="iconbtn" title="Close Live HUD">&times;</button>
+        </div>
       </header>
       <div class="body">
         <div class="row2" title="Wall-clock time at the takeoff site (UTC offset estimated from launch longitude)."><span class="k">Time</span><span class="v" id="hTime">&mdash;</span></div>
@@ -557,8 +729,12 @@
     <div id="status" class="hidden">Ready</div>
 
     <div id="chartPanel">
-      <div class="head"><span id="chartLabel">Altitude &amp; distance</span></div>
+      <div class="head">
+        <span id="chartLabel">Altitude &amp; distance</span>
+        <button id="closeChart" class="iconbtn" title="Close Chart">&times;</button>
+      </div>
       <div id="chart"></div>
+      <div id="chartCursor"></div>
     </div>
 
     <div id="bottomBar">
@@ -599,6 +775,9 @@
         <span class="t" id="progTime">00:00</span>
         <input type="range" id="progress" min="0" max="100" step="0.05" value="0">
         <span class="t" id="progDur">00:00</span>
+        <button id="toggleHud" class="tbtn" title="Toggle Live HUD (L)" style="width: 28px; height: 28px; border-radius: 6px; padding: 0;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </button>
       </div>
     </div>
 
@@ -1414,7 +1593,7 @@ const state = {
   // those points can recover. This overlay generates a smooth helix that
   // is anchored at the GPS fixes at each end of the segment but loops in
   // between at the user-chosen rotation rate.
-  spiralReconOn: false,
+  spiralReconOn: true,
   spiralMode: 'auto',           // 'auto' (threshold-detect) | 'manual' (time range)
     // 0.30 t/s prior maps to n=0 (no hidden full turns per sample-pair)
     // for an orbit radius around 5-10 m, where any n >= 1 would imply a
@@ -1441,8 +1620,9 @@ const state = {
   showAlt: false,
   showGround: false,    // plot terrain altitude under each fix vs time
                         //   (the gap between this and pilot altitude = AGL)
-  swapButtons: true,    // default swapped: left = rotate (3D view), right = pan.
-                        //   Better for touchpads. Uncheck to restore classic
+  showHud: true,
+  swapButtons: false,   // default: left = rotate (3D view), right = pan.
+                        //   Better for touchpads. Check to restore classic
                         //   left-pan / right-rotate mapping.
 };
 
@@ -1733,11 +1913,29 @@ function initMap() {
     zoom: 13, pitch: 65, bearing: 0, maxPitch: 75, hash: false,
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
-  map.addControl(new maplibregl.FullscreenControl({ container: document.getElementById('map') }), 'top-right');
+  // Skip FullscreenControl on touch devices -- iOS WebViews (e.g. Documents app)
+  // interpret requestFullscreen() as the app's own fullscreen toggle, causing
+  // the toolbar to hide/show on every tap. On phones the page is already
+  // effectively fullscreen.
+  if (!('ontouchstart' in window) && !navigator.maxTouchPoints) {
+    map.addControl(new maplibregl.FullscreenControl({ container: document.getElementById('map') }), 'top-right');
+  }
   map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+
+  // Prevent iOS WebView (Documents app etc.) from toggling its toolbar on
+  // single taps that fall through to the page. By intercepting click events
+  // on the map container and stopping propagation, the WebView shell never
+  // sees the tap as an "unhandled content tap".
+  document.getElementById('app').addEventListener('click', e => {
+    // Stop click events inside the application from bubbling up to
+    // the document/window to prevent the iOS WebView shell from toggling
+    // its fullscreen toolbar.
+    e.stopPropagation();
+  });
   map.addControl(new AppControl([
-    { title: 'Toggle follow pilot (C)', icon: '&#x2316;', onClick: centerOnPilot },
-    { title: 'Fit whole track (R)', icon: '&#x2922;', onClick: () => fitTrack() },
+    { id: 'btnFollow', title: 'Toggle follow pilot (C)', icon: '&#x2316;', onClick: centerOnPilot },
+    { id: 'btnFit', title: 'Fit whole track (R)', icon: '&#x2922;', onClick: () => fitTrack() },
+    { id: 'btnSwap', title: 'Swap mouse/touch drag controls', icon: '&#x21cc;', onClick: () => { if (window._setSwapButtons) window._setSwapButtons(!state.swapButtons); } },
   ]), 'top-right');
 
   map.on('load', () => {
@@ -1805,6 +2003,7 @@ class AppControl {
     for (const b of this.buttons) {
       const btn = document.createElement('button');
       btn.type = 'button';
+      if (b.id) btn.id = b.id;
       btn.title = b.title;
       btn.innerHTML = b.icon;
       btn.addEventListener('click', b.onClick);
@@ -2276,7 +2475,7 @@ function refreshChart() {
              gridcolor: 'rgba(255,255,255,0.06)',
              linecolor: 'rgba(255,255,255,0.15)', zeroline: false,
              visible: showAny, color: '#cbd5e1' },
-    shapes: [vline(times[i])],
+    shapes: [],
     showlegend: state.showAlt && state.showGround,
     legend: { x: 0.99, y: 0.98, xanchor: 'right', yanchor: 'top',
               bgcolor: 'rgba(0,0,0,0)',
@@ -2291,10 +2490,40 @@ function refreshChart() {
   lbl.textContent = parts.join('  \u00b7  ');
 }
 function syncChartCursor() {
-  if (!chartReady || (!state.showAlt && !state.showGround) || N === 0) return;
+  const cursor = document.getElementById('chartCursor');
+  if (!cursor) return;
+
+  if (!chartReady || (!state.showAlt && !state.showGround) || N === 0) {
+    cursor.style.display = 'none';
+    return;
+  }
+
+  const gd = document.getElementById('chart');
+  if (!gd) {
+    cursor.style.display = 'none';
+    return;
+  }
+
+  const fl = gd._fullLayout;
+  if (!fl || !fl.xaxis) {
+    cursor.style.display = 'none';
+    return;
+  }
+
+  const xa = fl.xaxis;
+  if (!xa._rl || !xa._length) {
+    cursor.style.display = 'none';
+    return;
+  }
+
   const i = findIdx(state.currentMs);
-  const tShift = tShiftIso(tMs[i]);
-  Plotly.relayout('chart', { 'shapes[0].x0': tShift, 'shapes[0].x1': tShift });
+  const curMsShifted = tMs[i] + tzOffsetMin * 60000;
+  const t = (curMsShifted - xa._rl[0]) / (xa._rl[1] - xa._rl[0]);
+  const pct = Math.max(0, Math.min(1, t));
+  const leftPx = (xa._offset || 0) + pct * xa._length;
+
+  cursor.style.left = leftPx + 'px';
+  cursor.style.display = 'block';
 }
 
 // ============================================================================
@@ -2500,7 +2729,7 @@ function setupAppUi() {
 
   function refreshMapDragHandlers() {
     if (!map) return;
-    const intercept = state.swapButtons || state.follow;
+    const intercept = !state.swapButtons || state.follow;
     if (intercept) {
       map.dragPan.disable();
       map.dragRotate.disable();
@@ -2517,6 +2746,8 @@ function setupAppUi() {
   function setFollow(on) {
     state.follow = on;
     document.getElementById('followCam').checked = on;
+    const btn = document.getElementById('btnFollow');
+    if (btn) btn.classList.toggle('active', on);
     if (!on) dragState = null;
     refreshMapDragHandlers();
   }
@@ -2526,11 +2757,14 @@ function setupAppUi() {
     state.swapButtons = on;
     const cb = document.getElementById('swapButtons');
     if (cb) cb.checked = on;
+    const btn = document.getElementById('btnSwap');
+    if (btn) btn.classList.toggle('active', on);
     // If we're leaving custom-drag territory, drop any in-flight gesture
     // so it doesn't carry over into the now-MapLibre-owned phase.
-    if (!on && !state.follow) dragState = null;
+    if (on && !state.follow) dragState = null;
     refreshMapDragHandlers();
   }
+  window._setSwapButtons = setSwapButtons;
 
   // dragState shape:
   //   { pointerId, mode: 'pan' | 'rotate' | 'orbit',
@@ -2577,20 +2811,20 @@ function setupAppUi() {
       if (e.button !== 0 && e.button !== 2) return;
 
       const isLeft     = (e.button === 0);
-      const basePan    = isLeft !== state.swapButtons;
+      const basePan    = isLeft === state.swapButtons;
       const baseAction = basePan ? 'pan' : 'rotate';
 
       if (state.follow) {
         if (baseAction === 'pan') {
           setFollow(false);
-          if (state.swapButtons) startCustomDrag(e, 'pan');
+          if (!state.swapButtons) startCustomDrag(e, 'pan');
           return;
         }
         startCustomDrag(e, 'orbit');
         return;
       }
 
-      if (state.swapButtons) startCustomDrag(e, baseAction);
+      if (!state.swapButtons) startCustomDrag(e, baseAction);
     }, { capture: true });
 
     canvas.addEventListener('pointermove', e => {
@@ -2628,7 +2862,7 @@ function setupAppUi() {
     window.addEventListener('pointercancel', endDrag);
 
     canvas.addEventListener('contextmenu', e => {
-      if (state.follow || state.swapButtons) e.preventDefault();
+      e.preventDefault();
     });
 
     // Follow mode: centre-anchored wheel / trackpad zoom on the map canvas.
@@ -2645,6 +2879,7 @@ function setupAppUi() {
 
   // Apply default swap state (left = rotate, right = pan) on first init.
   setSwapButtons(state.swapButtons);
+  setFollow(state.follow);
   window._wireMapGestures = wireMapGestures;
   if (map && map.loaded && map.loaded()) {
     configureMapZoom();
@@ -2969,32 +3204,30 @@ function setupAppUi() {
   // on interactive children (buttons, inputs, sliders, the speed select,
   // the toggle widgets) pass through untouched -- so a draggable bar that
   // *contains* controls still lets the controls work normally.
-  //
-  // The first time the user drags, the panel's existing width/height are
-  // pinned to preserve its current layout, then it switches from any
-  // right/bottom anchoring to plain left/top positioning so future moves
-  // are pure translations.
   function makeDraggable(panel, handle) {
     handle = handle || panel;
-    const passThrough = 'button, input, select, .tbtn, .toggle';
+    const passThrough = 'button, input, select, .tbtn, .toggle, .iconbtn';
     let drag = false, sx, sy, sl, st;
-    function onDown(e) {
+    function onDown(e, originalEvent) {
       if (e.button !== undefined && e.button !== 0) return;
-      if (handle === panel && e.target.closest(passThrough)) return;
+      if (e.target.closest(passThrough)) return;
       const r = panel.getBoundingClientRect();
       const p = panel.parentElement.getBoundingClientRect();
+      
       // Pin size BEFORE clearing right/bottom so the panel doesn't snap to
       // its content width when the right-anchor is released.
-      if (!panel.dataset.dragInit) {
-        panel.style.width  = r.width  + 'px';
-        panel.style.height = r.height + 'px';
-        panel.dataset.dragInit = '1';
-      }
+      // ALWAYS pin the size on down to prevent size jumps if orientation or layout changed:
+      panel.style.width  = r.width  + 'px';
+      panel.style.height = r.height + 'px';
+      panel.dataset.dragInit = '1';
+
       sl = r.left - p.left; st = r.top - p.top;
       panel.style.right = 'auto'; panel.style.bottom = 'auto';
       panel.style.left = sl + 'px'; panel.style.top = st + 'px';
       drag = true; sx = e.clientX; sy = e.clientY;
-      e.preventDefault();
+      
+      if (originalEvent && originalEvent.cancelable) originalEvent.preventDefault();
+      else if (e.preventDefault && e.cancelable) e.preventDefault();
     }
     function onMove(e) {
       if (!drag) return;
@@ -3007,20 +3240,58 @@ function setupAppUi() {
     }
     function onUp() { drag = false; }
     handle.addEventListener('mousedown', onDown);
-    handle.addEventListener('touchstart', e => onDown(e.touches[0]), { passive: false });
+    handle.addEventListener('touchstart', e => onDown(e.touches[0], e), { passive: false });
     window.addEventListener('mousemove', onMove);
-    window.addEventListener('touchmove', e => { if (drag) onMove(e.touches[0]); }, { passive: true });
+    window.addEventListener('touchmove', e => {
+      if (drag) {
+        onMove(e.touches[0]);
+        if (e.cancelable) e.preventDefault();
+      }
+    }, { passive: false });
     window.addEventListener('mouseup', onUp);
     window.addEventListener('touchend', onUp);
   }
+
+  // Register drag handlers:
+  // HUD is always draggable on all screens (mobile and desktop)
   makeDraggable(document.getElementById('hud'), document.querySelector('#hud header'));
-  makeDraggable(document.getElementById('bottomBar'));
-  makeDraggable(
-    document.getElementById('chartPanel'),
-    document.querySelector('#chartPanel .head')
-  );
-  // CSS resize:both grows/shrinks the panel; Plotly needs an explicit
-  // resize call to redraw at the new dimensions.
+  
+  // bottomBar and chartPanel are only draggable on desktop (> 768px)
+  if (window.innerWidth > 768) {
+    makeDraggable(document.getElementById('bottomBar'));
+    makeDraggable(
+      document.getElementById('chartPanel'),
+      document.querySelector('#chartPanel .head')
+    );
+  }
+
+  // Resize listener to clear drag inline styles when collapsing to mobile
+  window.addEventListener('resize', () => {
+    if (window.innerWidth <= 768) {
+      const chartPanel = document.getElementById('chartPanel');
+      if (chartPanel) {
+        chartPanel.style.left = '';
+        chartPanel.style.top = '';
+        chartPanel.style.right = '';
+        chartPanel.style.bottom = '';
+        chartPanel.style.width = '';
+        chartPanel.style.height = '';
+        chartPanel.removeAttribute('data-drag-init');
+      }
+      const bottomBar = document.getElementById('bottomBar');
+      if (bottomBar) {
+        bottomBar.style.left = '';
+        bottomBar.style.top = '';
+        bottomBar.style.right = '';
+        bottomBar.style.bottom = '';
+        bottomBar.style.width = '';
+        bottomBar.style.height = '';
+        bottomBar.removeAttribute('data-drag-init');
+      }
+    }
+  });
+
+  // Plotly chart auto-resizing
   if (window.ResizeObserver) {
     new ResizeObserver(() => {
       const el = document.getElementById('chart');
@@ -3150,6 +3421,34 @@ function setupAppUi() {
     updateChartPanel();
   };
 
+  // HUD toggles
+  const hudPanel = document.getElementById('hud');
+  const toggleHudBtn = document.getElementById('toggleHud');
+  function updateHudVisibility() {
+    hudPanel.classList.toggle('hidden', !state.showHud);
+    if (toggleHudBtn) {
+      toggleHudBtn.classList.toggle('active', state.showHud);
+    }
+  }
+  document.getElementById('closeHud').onclick = () => {
+    state.showHud = false;
+    updateHudVisibility();
+  };
+  if (toggleHudBtn) {
+    toggleHudBtn.onclick = () => {
+      state.showHud = !state.showHud;
+      updateHudVisibility();
+    };
+  }
+  updateHudVisibility();
+
+  // Chart close button
+  document.getElementById('closeChart').onclick = () => {
+    state.showAlt = false;
+    state.showGround = false;
+    updateChartPanel();
+  };
+
   // Track-ahead toggle: by default only the flown portion of the track is
   // visible; clicking this button reveals the not-yet-flown portion as a
   // soft preview line (alpha = FUTURE_ALPHA in buildPathLayers). No
@@ -3178,14 +3477,14 @@ function setupAppUi() {
   // left in gd-relative px), xa._length (plot-area width in px), and
   // xa._rl (range in linear coords -- ms since epoch for a date axis,
   // which is what seekToMs expects).
-  document.getElementById('chart').addEventListener('click', (ev) => {
-    const gd = ev.currentTarget;
+  function handleChartSeek(clientX) {
+    const gd = document.getElementById('chart');
     const fl = gd._fullLayout;
     if (!fl || !fl.xaxis) return;
     const xa = fl.xaxis;
     if (!xa._rl || !xa._length) return;
     const gdRect = gd.getBoundingClientRect();
-    const pxInPlot = ev.clientX - gdRect.left - (xa._offset || 0);
+    const pxInPlot = clientX - gdRect.left - (xa._offset || 0);
     const px = Math.max(0, Math.min(xa._length, pxInPlot));
     const t = px / xa._length;
     const msShifted = xa._rl[0] + t * (xa._rl[1] - xa._rl[0]);
@@ -3195,7 +3494,38 @@ function setupAppUi() {
     seekToMs(tzUnshiftMs(msShifted));
     pushLayers(pilotAt(state.currentMs), pilotHeading(state.currentMs));
     updateHud(findIdx(state.currentMs));
+  }
+
+  const chartEl = document.getElementById('chart');
+  chartEl.addEventListener('click', (ev) => {
+    handleChartSeek(ev.clientX);
   });
+
+  // Touch device seek helper: detects a short tap (duration < 250ms, movement < 10px)
+  // to perform the seek, bypassing Plotly's default dragging/selection on mobile.
+  let chartTouchStart = null;
+  chartEl.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      chartTouchStart = {
+        x: t.clientX,
+        y: t.clientY,
+        time: Date.now()
+      };
+    }
+  }, { passive: true });
+
+  chartEl.addEventListener('touchend', (e) => {
+    if (!chartTouchStart) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - chartTouchStart.x;
+    const dy = t.clientY - chartTouchStart.y;
+    const dt = Date.now() - chartTouchStart.time;
+    if (dt < 250 && Math.hypot(dx, dy) < 10) {
+      handleChartSeek(t.clientX);
+    }
+    chartTouchStart = null;
+  }, { passive: true });
 
   // Open another file from inside the app
   document.getElementById('loadBtn').onclick = () => fileInput.click();
@@ -3210,6 +3540,10 @@ function setupAppUi() {
       case 'c': centerOnPilot(); break;
       case 'f': toggleFs(document.getElementById('map')); break;
       case 'o': fileInput.click(); break;
+      case 'l':
+        state.showHud = !state.showHud;
+        updateHudVisibility();
+        break;
       case ' ': setPlaying(!state.playing); e.preventDefault(); break;
     }
   });
