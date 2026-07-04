@@ -2,3 +2,5 @@
 *.KML
 *.igc
 *.kml
+.DS_Store
+.claude/
