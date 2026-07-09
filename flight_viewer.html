@@ -541,6 +541,40 @@
     bottom: max(6px, env(safe-area-inset-bottom, 0px)) !important;
   }
 
+  /* Kill panel transitions during a fresh file load: the chart panel used
+     to play its slide-in over the fading landing screen -- an animation
+     drifting through the middle of the page. */
+  .noTrans, .noTrans * { transition: none !important; }
+
+  /* A-B loop highlight on the timeline */
+  #loopBand {
+    position: absolute; top: 40%; height: 20%;
+    background: rgba(255,255,255,0.28);
+    border-left: 2px solid #fff; border-right: 2px solid #fff;
+    border-radius: 2px; pointer-events: none; display: none; z-index: 2;
+  }
+
+  /* Airspace violation marks above the vario strip */
+  #progTicks .tick.violation {
+    background: rgba(239, 68, 68, 0.95);
+    top: -3px; bottom: auto; height: 3px; min-width: 2px;
+    box-shadow: none; border-radius: 1px;
+  }
+
+  /* HUD: multi-pilot live deltas */
+  #hudCmp { border-top: 1px solid var(--bd); margin-top: 4px; padding-top: 4px; }
+  #hudCmp:empty { display: none; }
+
+  /* A-B loop button state badge (keeps the button square) */
+  #loopBtn { position: relative; }
+  #loopBtn .loopBadge {
+    position: absolute; top: -3px; right: -3px;
+    background: var(--accent); color: #fff;
+    font-size: 8px; font-weight: 700; line-height: 1;
+    padding: 1px 3px; border-radius: 5px; letter-spacing: 0.02em;
+    pointer-events: none;
+  }
+
   /* Record button live state */
   .tbtn.recording { background: var(--bad) !important; color: #fff !important;
                     border-color: var(--bad) !important;
@@ -781,6 +815,12 @@
         Supports <code>.igc</code> <code>.gpx</code> <code>.kml</code>
         &middot; offline map <code>.fvmap</code>
       </div>
+      <div id="demoWrap" style="display:none;margin-top:14px">
+        <button id="demoBtn" class="btn-primary"
+                style="background:rgba(255,255,255,0.08);border:1px solid var(--bd-2)">
+          &#x25B6;&nbsp; Try a demo flight
+        </button>
+      </div>
       <div id="landingHint" style="display:none;margin-top:12px;font-size:12px;color:var(--good)"></div>
       <div id="landingError" style="display:none;margin-top:12px;font-size:12px;color:var(--bad)"></div>
     </div>
@@ -1005,10 +1045,21 @@
         <div class="sec" data-sec="pilot"><span class="chev">&#x25BE;</span><span>Trail &amp; pilot</span></div>
         <div class="secBody" data-secbody="pilot">
         <div class="row">
-          <span class="lbl" title="Past track fades to transparent over this many seconds behind the pilot. Drag to 0 for &quot;off&quot; (no fade). Max stretches to the full flight duration when a track loads; step auto-scales to ~10% of the current value.">Track fade</span>
+          <span class="lbl" title="Fade the past track to transparent behind the pilot, using the hold/fade times below. Off by default (the whole flown track stays bright).">Track fade</span>
+          <div class="ctl"><input type="checkbox" id="trackFadeCb"></div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="How many seconds behind the pilot the track stays fully bright before it starts fading. The slider works regardless of the Track fade switch above, but only takes effect when it's on.">Track hold</span>
           <div class="ctl">
-            <input type="range" id="trailFade" min="0" max="600" step="10" value="0" data-default="0" style="width:120px">
-            <span id="trailFadeV" style="min-width:44px;color:var(--fg-dim)">off</span>
+            <input type="range" id="trackHold" min="0" max="600" step="10" value="180" data-default="180" style="width:120px">
+            <span id="trackHoldV" style="min-width:44px;color:var(--fg-dim)">3:00</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="After the hold window, the track fades to transparent over this many seconds. The slider works regardless of the Track fade switch above, but only takes effect when it's on.">Track fade time</span>
+          <div class="ctl">
+            <input type="range" id="trailFade" min="0" max="600" step="10" value="30" data-default="30" style="width:120px">
+            <span id="trailFadeV" style="min-width:44px;color:var(--fg-dim)">0:30</span>
           </div>
         </div>
         <div class="row">
@@ -1056,6 +1107,40 @@
         <div class="row">
           <span class="lbl" title="Vertical line from the pilot down to the terrain plus a soft shadow disc on the ground. Makes height above ground readable at a glance in the 3D view.">Altitude line</span>
           <div class="ctl"><input type="checkbox" id="altLineCb" checked></div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Draws the best XC triangle on the map: dashed edges between the three turnpoints, markers at each corner, and a red closing-gap line. Computed with XContest rules (see Flight stats).">XC triangle</span>
+          <div class="ctl"><input type="checkbox" id="xcTriCb" checked></div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Translucent wall from the track down to the terrain (SeeYou-style curtain). Strong depth cue for the 3D shape of the flight; costs some GPU on long tracks.">Track curtain</span>
+          <div class="ctl"><input type="checkbox" id="curtainCb"></div>
+        </div>
+        <div class="row" id="rowCurtainFadeCb">
+          <span class="lbl" title="Fade the curtain to transparent behind the pilot, using the hold/fade times below. Independent of the track fade above. On by default.">Curtain fade</span>
+          <div class="ctl"><input type="checkbox" id="curtainFadeCb" checked></div>
+        </div>
+        <div class="row" id="rowCurtainHold">
+          <span class="lbl" title="How many seconds behind the pilot the curtain stays fully opaque before it starts fading. The slider works regardless of the Curtain fade switch above, but only takes effect when it's on.">Curtain hold</span>
+          <div class="ctl">
+            <input type="range" id="curtainHold" min="0" max="600" step="10" value="120" data-default="120" style="width:120px">
+            <span id="curtainHoldV" style="min-width:44px;color:var(--fg-dim)">2:00</span>
+          </div>
+        </div>
+        <div class="row" id="rowCurtainFade">
+          <span class="lbl" title="After the hold window, the curtain fades to transparent over this many seconds. The slider works regardless of the Curtain fade switch above, but only takes effect when it's on.">Curtain fade time</span>
+          <div class="ctl">
+            <input type="range" id="curtainFade" min="0" max="600" step="5" value="15" data-default="15" style="width:120px">
+            <span id="curtainFadeV" style="min-width:44px;color:var(--fg-dim)">0:15</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Repeat a section of the flight: scrub to the start and press Set A (or the [ key), then Set B at the end (]). Playback loops inside the marked band on the timeline. \\ clears.">A–B loop</span>
+          <div class="ctl" style="gap:6px">
+            <button id="loopSetA" class="tbtn" style="width:auto;padding:0 8px;font-size:11px">Set A</button>
+            <button id="loopSetB" class="tbtn" style="width:auto;padding:0 8px;font-size:11px">Set B</button>
+            <button id="loopClear" class="tbtn" style="width:auto;padding:0 8px;font-size:11px;color:var(--fg-mute)">&times;</button>
+          </div>
         </div>
         </div>
 
@@ -1129,8 +1214,12 @@
           <div class="ctl"><button id="shotBtn" class="btn-small">Save image</button></div>
         </div>
         <div class="row" id="rowRecord">
-          <span class="lbl" title="Record the 3D view while the flight plays back. Click again to stop and save the video file.">Record video</span>
+          <span class="lbl" title="Record the flight playback. Click again to stop and save the video file.">Record video</span>
           <div class="ctl"><button id="recBtn" class="btn-small">Start recording</button></div>
+        </div>
+        <div class="row" id="rowRecordUi">
+          <span class="lbl" title="On: records everything on screen exactly as you see it — all panels, buttons and the settings window (uses the browser's screen-capture picker, choose 'This Tab'). Off: records only the clean 3D map plus the Live HUD and chart, with no prompt.">Record all panels</span>
+          <div class="ctl"><input type="checkbox" id="recordFullUi" checked></div>
         </div>
         <div class="row" id="rowShareLink">
           <span class="lbl" title="Copy a link to this page with the current playback position embedded (#t=seconds). Whoever opens it loads the same file and jumps to this moment.">Share position</span>
@@ -1161,6 +1250,7 @@
         <div class="row2" title="Glide ratio over ground (ground speed / sink rate), smoothed."><span class="k">Glide L/D</span><span class="v" id="hLd">&mdash;</span></div>
         <div class="row2" title="Wind estimated from track drift while circling. Direction is where the wind blows FROM. Shows the estimate nearest to the current time."><span class="k">Wind est.</span><span class="v" id="hWind">&mdash;</span></div>
         <div class="row2"><span class="k">Track dist.</span><span class="v" id="hDist">&mdash;</span></div>
+        <div id="hudCmp" title="Live gap to the other pilots: horizontal distance and altitude difference (▲ = primary is higher)."></div>
       </div>
     </div>
 
@@ -1192,6 +1282,8 @@
       <div class="body">
         <div class="meta" id="statsMeta" style="display:none"></div>
         <div id="statsRows"></div>
+        <div class="subhead" id="violHead" style="display:none;color:var(--bad)">Airspace violations (click to jump)</div>
+        <div id="violList"></div>
         <div class="subhead" id="windHead" style="display:none">Wind by altitude</div>
         <div id="windList"></div>
         <div class="subhead" id="thermalHead" style="display:none">Thermals (click to jump)</div>
@@ -1206,6 +1298,7 @@
         <div id="progWrap">
           <input type="range" id="progress" min="0" max="100" step="0.05" value="0">
           <div id="progTicks"></div>
+          <div id="loopBand"></div>
           <div id="progBubble"></div>
         </div>
         <span class="t" id="progDur">00:00</span>
@@ -1225,6 +1318,14 @@
           <input type="range" id="speedSlider" min="0" max="128" step="1" value="13">
           <span id="speedV">5&times;</span>
         </div>
+        <button id="loopBtn" class="tbtn"
+                title="A-B loop: 1st click sets A at the current time, 2nd sets B (loop starts), 3rd clears. Keys: [ ] \">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+            <path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+          </svg>
+        </button>
         <select id="barPilotSel" style="display:none"
                 title="Primary pilot — camera, HUD, chart, statistics and timeline all follow the selected track (playback position is kept)"></select>
       </div>
@@ -1233,6 +1334,12 @@
         <button id="loadBtn" class="tbtn" title="Open file (O)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        </button>
+        <button id="addTrackBtn" class="tbtn" title="Add comparison track">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <path d="M12 11v5M9.5 13.5h5"/></svg>
         </button>
         <button id="toggleChart" class="tbtn" title="Show altitude &amp; ground chart (gap = AGL)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1289,6 +1396,9 @@
       <tr><td><kbd>&uarr;</kbd> / <kbd>&darr;</kbd></td><td>Playback speed up / down</td></tr>
       <tr><td><kbd>Home</kbd></td><td>Back to start</td></tr>
       <tr><td><kbd>End</kbd></td><td>Jump to end</td></tr>
+      <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Set A-B loop start / end</td></tr>
+      <tr><td><kbd>\</kbd></td><td>Clear A-B loop</td></tr>
+      <tr><td><kbd>Wheel</kbd></td><td>On the chart: zoom time axis (dbl-click resets)</td></tr>
       <tr><td><kbd>S</kbd></td><td>Settings panel</td></tr>
       <tr><td><kbd>I</kbd></td><td>Flight statistics</td></tr>
       <tr><td><kbd>L</kbd></td><td>Live HUD</td></tr>
@@ -1538,6 +1648,11 @@ function sampleGroundAlt() {
     refreshChart();
     if (groundReady) {
       autoAlignGround();
+      // AGL-limited airspace zones could not be checked before the DEM
+      // arrived -- re-run the violation scan now.
+      if (typeof airspaceZones !== 'undefined' && airspaceZones.length) {
+        computeAirspaceViolations();
+      }
     }
   });
 }
@@ -1981,7 +2096,8 @@ function buildSpiralLayers() {
     jointRounded: true,
     parameters: { depthTest: true, depthMask: true },
     updateTriggers: {
-      getColor: [state.currentMs, state.showFuture, state.trailFadeSec],
+      getColor: [state.currentMs, state.showFuture,
+                 state.trackHoldSec, state.trailFadeSec, state.trackFadeOn],
       getWidth: state.trackWidth,
     },
   })];
@@ -2162,9 +2278,11 @@ const PERSIST_KEYS = [
   'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed',
   'swapButtons', 'showHud', 'showChart', 'chartMetric', 'camStyle',
   'autoTrim', 'cmpAlign', 'airspaceShow', 'showAltLine', 'pilotLabel',
-  'orbitSpeedDeg', 'orbitResumeSec',
+  'orbitSpeedDeg', 'orbitResumeSec', 'showXcTri', 'showCurtain',
+  'recordFullUi', 'curtainFadeSec', 'trackFadeOn', 'trackHoldSec',
+  'curtainFadeOn', 'curtainHoldSec',
 ];
-const PREFS_SCHEMA = 2;
+const PREFS_SCHEMA = 4;
 const PERSIST_SET = new Set(PERSIST_KEYS);
 function loadSavedPrefs() {
   try {
@@ -2230,10 +2348,13 @@ const rawState = {
   showFuture: false,    // hide unflown portion of the track by default;
                         //   when true, the whole track renders at full
                         //   opacity (fade is bypassed entirely)
-  trailFadeSec: 0,      // seconds of fully-visible trail behind the pilot
-                        //   before fading to transparent. 0 = off (whole
-                        //   past stays bright); max clamps to the loaded
-                        //   flight's duration when one loads.
+  trackFadeOn: false,   // whether the track trail fade is active at all;
+                        //   off by default (whole flown track stays bright)
+  trackHoldSec: 180,    // seconds behind the pilot the track stays fully
+                        //   bright before the fade window starts
+  trailFadeSec: 30,     // seconds it takes the track to fade to transparent
+                        //   once the hold window has elapsed. Only takes
+                        //   effect when trackFadeOn is true.
   pilotShape: 'cylinder',   // 'cylinder' = white body + magenta band + red wedge, 'arrow' = circle + triangle, 'wing' = canopy oval
   pilotSize: 0.5,       // multiplier on the base pilot marker pixel footprint
   speed: 5,
@@ -2265,6 +2386,17 @@ const rawState = {
   airspaceShow: true,
   showAltLine: true,    // vertical pilot-to-ground line + soft ground shadow
                         //   (reads AGL at a glance; classic Ayvri/Doarama cue)
+  showXcTri: true,      // draw the best XC triangle on the map
+  showCurtain: true,    // translucent track-to-ground curtain wall
+  curtainFadeOn: true,  // whether the curtain fade is active at all;
+                        //   on by default (independent of trackFadeOn)
+  curtainHoldSec: 120,  // seconds behind the pilot the curtain stays fully
+                        //   opaque before the fade window starts
+  curtainFadeSec: 15,   // seconds it takes the curtain to fade to
+                        //   transparent once the hold window has elapsed.
+                        //   Only takes effect when curtainFadeOn is true.
+  recordFullUi: true,   // record everything on screen (settings, panels)
+                        //   via screen capture; off = clean map+HUD+chart
 };
 
 // Pristine factory defaults, captured BEFORE saved preferences merge in.
@@ -2286,6 +2418,17 @@ const FACTORY_STATE = JSON.parse(JSON.stringify(rawState));
   if (saved._schema !== PREFS_SCHEMA) {
     rawState.camStyle = 'orbit';
     rawState.orbitSpeedDeg = 4;
+    rawState.showCurtain = true;
+    // Schema 4 split the single trail-fade slider into independent
+    // hold/fade-time pairs for the track and the curtain, each gated by
+    // its own on/off switch. Force the new factory defaults once so a
+    // pre-schema-4 fade value doesn't linger under the new semantics.
+    rawState.trackFadeOn = false;
+    rawState.trackHoldSec = 180;
+    rawState.trailFadeSec = 30;
+    rawState.curtainFadeOn = true;
+    rawState.curtainHoldSec = 120;
+    rawState.curtainFadeSec = 15;
   }
 }
 
@@ -2939,17 +3082,40 @@ function buildPathData() {
   for (let i = 0; i < N - 1; i++) {
     const path = new Array(sub + 1);
     for (let s = 0; s <= sub; s++) path[s] = splineSample(i, s / sub);
-    const color = useVario
-      ? varioColor(binToVario(varioBin(smoothedVario(i))))
-      : state.singleColor;
+    // Airspace-alert mode: while an airspace file is displayed, the track
+    // goes muted single-colour with violating stretches in red -- the
+    // vario rainbow would bury the safety signal.
+    const color = (airspaceViolations && state.airspaceShow)
+      ? (airspaceViolations.mask[i]
+          ? [239, 68, 68]
+          : state.singleColor)
+      : (useVario
+          ? varioColor(binToVario(varioBin(smoothedVario(i))))
+          : state.singleColor);
     data[i] = { path, color, tStart: tMs[i], tEnd: tMs[i + 1] };
   }
   return data;
 }
 
+// Shared hold-then-linear-fade curve, used independently by the track
+// trail (segmentAlpha, below) and the curtain (buildCurtainLayers). A
+// flown stretch stays fully opaque for `holdSec` behind the pilot, then
+// ramps linearly to zero over the following `fadeSec`. When `enabled` is
+// false the group never fades, regardless of the hold/fade values --
+// the switch is the sole on/off control; the sliders always stay live so
+// their values keep adjusting (and persisting) even while the group is off.
+function holdFadeAlpha(ageSec, holdSec, fadeSec, enabled) {
+  if (!enabled) return 255;
+  if (ageSec <= holdSec) return 255;
+  if (fadeSec <= 0) return 0;
+  const t = (ageSec - holdSec) / fadeSec;
+  return t >= 1 ? 0 : Math.round(255 * (1 - t));
+}
+
 // Per-segment alpha as a function of playback time. The pilot is at
-// state.currentMs. Segments behind the pilot stay fully opaque for the
-// "fresh" window then fade linearly to zero over state.trailFadeSec.
+// state.currentMs. Segments behind the pilot stay fully opaque for
+// state.trackHoldSec then fade linearly to zero over state.trailFadeSec
+// -- only when state.trackFadeOn is true; otherwise they stay bright.
 // Segments ahead of the pilot are either hidden (state.showFuture=false)
 // or rendered as a soft "preview" at FUTURE_ALPHA.
 // The boundary segment that contains the pilot is treated as just-flown
@@ -2962,11 +3128,9 @@ function segmentAlpha(tStart, tEnd, nowOverride) {
   // own (takeoff-aligned) clock.
   const now = nowOverride == null ? state.currentMs : nowOverride;
   if (tEnd <= now) {
-    const fade = state.trailFadeSec;
-    if (fade <= 0) return 255;
     const ageSec = (now - tEnd) / 1000;
-    if (ageSec >= fade) return 0;
-    return Math.round(255 * (1 - ageSec / fade));
+    return holdFadeAlpha(ageSec, state.trackHoldSec, state.trailFadeSec,
+                          state.trackFadeOn);
   }
   // Both fully-future segments AND the boundary segment that contains
   // the pilot are hidden here. The boundary segment's past portion is
@@ -2990,6 +3154,7 @@ function getPathData() {
               '|u' + state.varioMaxUp + 'd' + state.varioMaxDown +
               '|s' + state.smoothSubdiv +
               '|t' + state.smoothTension.toFixed(2) +
+              '|a' + airRev + ':' + (state.airspaceShow ? 1 : 0) +
               '|n' + N;
   if (pathDataCache && sig === pathDataSig) return pathDataCache;
   pathDataSig   = sig;
@@ -3036,7 +3201,8 @@ function buildPathLayers() {
   const data = getPathData();
   if (!data.length) return [];
   const COLOR_TRIGGER = [
-    state.currentMs, state.showFuture, state.trailFadeSec,
+    state.currentMs, state.showFuture,
+    state.trackHoldSec, state.trailFadeSec, state.trackFadeOn,
   ];
   const visible = visiblePathData(data);
   const tipData = buildTipData(data);
@@ -3139,6 +3305,121 @@ function buildPathLayers() {
 
   return layers;
 }
+// ---------------------------------------------------------------------------
+// XC triangle overlay: dashed-white edges between the three turnpoints of
+// the best triangle (see computeXcScores), corner markers, and the red
+// closing-gap line. Drawn always-on-top so the geometry reads even when an
+// edge cuts through a ridge.
+// ---------------------------------------------------------------------------
+function buildXcLayers() {
+  if (!state.showXcTri || N === 0 || !flightStats || !flightStats.xcTri
+      || flightStats.xcTri.scoreM < 500 || !flightStats.xcTri.tpIdx) {
+    return [];
+  }
+  const t = flightStats.xcTri;
+  const at = i => [fixes[i].lon, fixes[i].lat, altDisplay(fixes[i])];
+  const P = t.tpIdx.map(at);
+  return [
+    new deck.PathLayer({
+      id: 'xc-tri',
+      data: [{ path: [P[0], P[1], P[2], P[0]] }],
+      getPath: d => d.path,
+      getColor: [255, 255, 255, 140],
+      getWidth: 2, widthUnits: 'pixels',
+      billboard: true,
+      parameters: PILOT_GL_PARAMS,
+    }),
+    new deck.ScatterplotLayer({
+      id: 'xc-tp',
+      data: P.map(p => ({ position: p })),
+      getPosition: d => d.position,
+      getFillColor: [96, 165, 250, 235],
+      getLineColor: [255, 255, 255, 255],
+      stroked: true, getLineWidth: 1.5, lineWidthUnits: 'pixels',
+      getRadius: 6, radiusUnits: 'pixels',
+      parameters: PILOT_GL_PARAMS,
+    }),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Track curtain: a translucent wall from the whole track down to the DEM
+// (SeeYou-style). Vario-tinted and revealed with playback like the track.
+// ---------------------------------------------------------------------------
+let curtainCache = null;
+let curtainSig = '';
+function buildCurtainLayers() {
+  if (!state.showCurtain || N < 2) return [];
+  const sig = `${state.altSrc}|${state.exag.toFixed(2)}|${state.altOffset.toFixed(1)}`
+    + `|u${state.varioMaxUp}d${state.varioMaxDown}`
+    + `|g${groundReady ? 1 : 0}|n${N}`;
+  if (!curtainCache || sig !== curtainSig) {
+    curtainSig = sig;
+    let minAlt = Infinity;
+    for (let i = 0; i < N; i++) minAlt = Math.min(minAlt, altOf(fixes[i]));
+    const fallbackBase = (minAlt + state.altOffset) * state.exag - 10;
+    const baseAt = i => {
+      const g = groundAlt ? groundAlt[i] : NaN;
+      return Number.isNaN(g) ? fallbackBase : g * state.exag;
+    };
+    // SolidPolygonLayer triangulates on the 2D (lon/lat) footprint, so a
+    // truly vertical wall (top and bottom sharing lon/lat) collapses to a
+    // zero-area line and renders nothing. Give the base edge a ~3 m
+    // perpendicular offset: the footprint gains real area while the wall
+    // stays visually vertical (3 m lean over a 100 m+ drop is invisible).
+    const OFF_M = 3;
+    const mPerLat = 111320;
+    const data = new Array(N - 1);
+    for (let i = 0; i < N - 1; i++) {
+      const a = fixes[i], b = fixes[i + 1];
+      const mPerLon = 111320 * Math.cos(a.lat * Math.PI / 180) || 1;
+      let dx = (b.lon - a.lon) * mPerLon, dy = (b.lat - a.lat) * mPerLat;
+      const len = Math.hypot(dx, dy) || 1;
+      const ox = -dy / len * OFF_M / mPerLon;   // perpendicular, in degrees
+      const oy = dx / len * OFF_M / mPerLat;
+      data[i] = {
+        polygon: [
+          [a.lon, a.lat, altDisplay(a)],
+          [b.lon, b.lat, altDisplay(b)],
+          [b.lon + ox, b.lat + oy, baseAt(i + 1)],
+          [a.lon + ox, a.lat + oy, baseAt(i)],
+        ],
+        color: varioColor(smoothedVario(i)),
+        tStart: tMs[i],
+        tEnd: tMs[i + 1],
+      };
+    }
+    curtainCache = data;
+  }
+  // The curtain reveals with playback and fades on its OWN hold/fade
+  // window (state.curtainHoldSec / state.curtainFadeSec), gated by its own
+  // state.curtainFadeOn switch -- entirely independent of the track fade.
+  const now = state.currentMs;
+  const alphaOf = d => {
+    if (state.showFuture) return 255;
+    if (d.tStart <= now && d.tEnd > now) return 255;   // current segment
+    if (d.tEnd > now) return 0;                         // unflown
+    const ageSec = (now - d.tEnd) / 1000;
+    return holdFadeAlpha(ageSec, state.curtainHoldSec, state.curtainFadeSec,
+                          state.curtainFadeOn);
+  };
+  return [new deck.SolidPolygonLayer({
+    id: 'track-curtain',
+    data: curtainCache.filter(d => alphaOf(d) > 0),
+    getPolygon: d => d.polygon,
+    // Translucent light-grey veil, opacity scaled by the curtain fade.
+    getFillColor: d => [170, 185, 205, Math.round(alphaOf(d) * 0.35)],
+    extruded: false, filled: true,
+    parameters: { depthTest: true, depthMask: false,
+                  cullMode: 'none', cullFace: false },
+    updateTriggers: {
+      getFillColor: [state.currentMs, state.showFuture,
+                     state.curtainHoldSec, state.curtainFadeSec,
+                     state.curtainFadeOn],
+    },
+  })];
+}
+
 // Meters per screen pixel at the given latitude and Web-Mercator zoom.
 // Used so the pilot marker keeps a constant screen size regardless of how
 // far the user has zoomed -- otherwise a 30 m polygon vanishes to a few
@@ -3186,7 +3467,7 @@ function buildAltLineLayers(pos) {
     billboard: true,
     parameters: { depthTest: true, depthMask: false },
   }));
-  const mpp = Math.min(map ? mPerPx(pos[1], map.getZoom()) : 1, PILOT_MAX_MPP);
+  const mpp = pilotMpp(map ? mPerPx(pos[1], map.getZoom()) : 1);
   const r = 7 * state.pilotSize * mpp;
   layers.push(new deck.PolygonLayer({
     id: 'pilot-shadow',
@@ -3206,10 +3487,17 @@ function buildAltLineLayers(pos) {
 // at 1.7 lets the marker converge toward glider-ish dimensions (wedge tip
 // ~12 m at default size) instead.
 const PILOT_MAX_MPP = 1.7;
+// Adaptive marker scale: constant screen pixels while zoomed out (always
+// findable), smoothly shrinking toward physical glider scale only when
+// zoomed in close (a hard metre cap made the marker invisible at fit-track
+// distances).
+function pilotMpp(raw) {
+  return raw * Math.min(1, Math.max(0.55, raw / PILOT_MAX_MPP));
+}
 
 function buildPilotLayers(pos, headingDeg) {
   const s   = state.pilotSize;
-  const mpp = Math.min(map ? mPerPx(pos[1], map.getZoom()) : 1, PILOT_MAX_MPP);
+  const mpp = pilotMpp(map ? mPerPx(pos[1], map.getZoom()) : 1);
 
   if (state.pilotShape === 'cylinder') {
     // True 3-D marker: white inner body + magenta outer band + red wedge.
@@ -3265,8 +3553,10 @@ function pushLayers(pilotPos, heading) {
   if (!overlay) return;
   overlay.setProps({
     layers: [
+      ...buildCurtainLayers(),
       ...buildPathLayers(),
       ...buildCmpLayers(),
+      ...buildXcLayers(),
       ...buildAltLineLayers(pilotPos),
       ...buildPilotLayers(pilotPos, heading),
     ],
@@ -3503,10 +3793,12 @@ function computeXcScores() {
   if (span < 10) return null;
   const M = Math.min(250, span);
   const xs = new Float64Array(M), ys = new Float64Array(M);
+  const idx = new Int32Array(M);     // downsample -> original fix index
   const refLat = fixes[i0].lat;
   const mLat = 111320, mLon = 111320 * Math.cos(refLat * Math.PI / 180);
   for (let k = 0; k < M; k++) {
-    const f = fixes[i0 + Math.round(k * (span - 1) / (M - 1))];
+    idx[k] = i0 + Math.round(k * (span - 1) / (M - 1));
+    const f = fixes[idx[k]];
     xs[k] = f.lon * mLon;
     ys[k] = f.lat * mLat;
   }
@@ -3557,12 +3849,12 @@ function computeXcScores() {
   }
   let tri = null;
   for (const t of top) {
-    let gap = Infinity;
+    let gap = Infinity, gs = 0, ge = M - 1;
     for (let s = 0; s <= t.a; s++) {
       const sM = s * M;
       for (let e = t.c; e < M; e++) {
         const d = D[sM + e];
-        if (d < gap) gap = d;
+        if (d < gap) { gap = d; gs = s; ge = e; }
       }
     }
     const legs = [D[t.a * M + t.b], D[t.b * M + t.c], D[t.a * M + t.c]];
@@ -3571,6 +3863,9 @@ function computeXcScores() {
       periM: t.peri, gapM: gap, scoreM,
       fai: Math.min(...legs) >= 0.28 * t.peri,
       closed: gap <= 0.2 * t.peri,
+      // original-fix indices for drawing the triangle on the map
+      tpIdx: [idx[t.a], idx[t.b], idx[t.c]],
+      gapIdx: [idx[gs], idx[ge]],
     };
     if (!tri || cand.scoreM > tri.scoreM) tri = cand;
   }
@@ -3639,6 +3934,10 @@ function analyzeFlight() {
 //  Combined chart
 // ============================================================================
 let chartReady = false;
+// User-chosen x-axis window ([ms, ms] in launch-local "fake-UTC"), set by
+// wheel-zooming over the chart; null = full flight. Cursor sync and
+// click-to-seek read the live axis range, so they follow zoom for free.
+let chartXRange = null;
 function vline(t) {
   return { type: 'line', x0: t, x1: t, yref: 'paper', y0: 0, y1: 1,
            line: { color: '#ef4444', width: 1.5 } };
@@ -3792,11 +4091,13 @@ function refreshChart() {
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
     font: { color: '#9aa3b2', size: 11 },
     dragmode: false,
-    xaxis: { type: 'date', tickformat: '%H:%M:%S',
+    xaxis: Object.assign({
+             type: 'date', tickformat: '%H:%M:%S',
              hoverformat: '%H:%M:%S',
              gridcolor: 'rgba(255,255,255,0.06)',
              linecolor: 'rgba(255,255,255,0.15)', zeroline: false,
              fixedrange: true },
+           chartXRange ? { range: chartXRange.slice(), autorange: false } : {}),
     yaxis,
     shapes: [],
     showlegend: showLegend,
@@ -3919,6 +4220,36 @@ function updateHud(i) {
   }
 
   elDist().textContent = `${U.distConv(cumKm[i]).toFixed(2)} ${U.distLabel()}`;
+
+  // Live gaps to the other pilots (multi-track): horizontal distance and
+  // altitude difference at the synced playback moment.
+  const cmpBox = document.getElementById('hudCmp');
+  if (cmpBox) {
+    if (!cmpTracks.length) {
+      if (cmpBox.childElementCount) cmpBox.innerHTML = '';
+    } else {
+      if (cmpBox.childElementCount !== cmpTracks.length) {
+        cmpBox.innerHTML = cmpTracks.map(() =>
+          '<div class="row2"><span class="k"></span><span class="v"></span></div>'
+        ).join('');
+      }
+      const exag = Math.max(state.exag, 0.01);
+      cmpTracks.forEach((tr, k2) => {
+        const row = cmpBox.children[k2];
+        if (!row) return;
+        const p = cmpPilotAt(tr, cmpTimeFor(tr, state.currentMs));
+        if (!p) return;
+        const distM = hav(f.lat, f.lon, p[1], p[0]);
+        // cmpPilotAt returns display altitude: (alt + offset) * exag.
+        const theirAlt = p[2] / exag - state.altOffset;
+        const dAlt = altOf(f) - theirAlt;
+        row.children[0].textContent = 'Δ ' + (tr.label || 'P' + (k2 + 2));
+        row.children[1].textContent =
+          `${U.distConv(distM / 1000).toFixed(2)} ${U.distLabel()} `
+          + `${dAlt >= 0 ? '▲' : '▼'}${U.altConv(Math.abs(dAlt)).toFixed(0)} ${U.altLabel()}`;
+      });
+    }
+  }
 }
 
 // ============================================================================
@@ -3993,6 +4324,32 @@ function renderStatsPanel() {
       + (t.closed ? '' : ' (open)')));
   }
   rowsEl.innerHTML = rows.join('');
+
+  // Airspace violations (clickable, red).
+  const violHead = document.getElementById('violHead');
+  const violList = document.getElementById('violList');
+  if (violHead && violList) {
+    if (airspaceViolations) {
+      violHead.style.display = '';
+      violList.innerHTML = airspaceViolations.segs.map((v, k) =>
+        `<div class="thermal" data-viol="${k}">`
+        + `<span>${fmtLocalHMS(tMs[v.i0])}–${fmtLocalHMS(tMs[v.i1])}</span>`
+        + `<span style="color:var(--bad)">${esc(v.name)}</span>`
+        + `</div>`).join('');
+      for (const el of violList.querySelectorAll('.thermal')) {
+        el.addEventListener('click', () => {
+          const v = airspaceViolations.segs[parseInt(el.dataset.viol, 10)];
+          if (!v) return;
+          seekToMs(tMs[v.i0]);
+          pushLayers(pilotAt(state.currentMs), pilotHeading(state.currentMs));
+          updateHud(findIdx(state.currentMs));
+        });
+      }
+    } else {
+      violHead.style.display = 'none';
+      violList.innerHTML = '';
+    }
+  }
 
   // Wind profile by altitude band (from circling-drift estimates).
   const windHead = document.getElementById('windHead');
@@ -4087,6 +4444,73 @@ function buildProgressTicks() {
     mk('takeoff', flightStats.takeoffMs, 'Takeoff');
     mk('maxalt', flightStats.maxAltMs, 'Max altitude');
   }
+
+  // Airspace violations: red marks riding above the vario strip.
+  if (airspaceViolations) {
+    const pct = ms => ((ms - T0) / (T1 - T0)) * 100;
+    for (const v of airspaceViolations.segs) {
+      const el = document.createElement('div');
+      el.className = 'tick violation';
+      const l = pct(tMs[v.i0]);
+      el.style.left = l + '%';
+      el.style.width = Math.max(0.3, pct(tMs[v.i1]) - l) + '%';
+      el.title = 'Airspace: ' + v.name;
+      box.appendChild(el);
+    }
+  }
+}
+
+// ============================================================================
+//  A-B loop -- repeat a section of the flight
+// ============================================================================
+let loopAMs = 0;
+let loopBMs = 0;
+const LOOP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
+function updateLoopBand() {
+  // Transport-bar button stays a fixed square with the loop icon; a small
+  // corner badge (A / AB) marks the state without stretching the button.
+  const btn = document.getElementById('loopBtn');
+  if (btn) {
+    if (!btn.querySelector('svg')) btn.innerHTML = LOOP_ICON_SVG;
+    let badge = btn.querySelector('.loopBadge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'loopBadge';
+      btn.appendChild(badge);
+    }
+    const both = loopAMs && loopBMs && loopBMs > loopAMs;
+    badge.textContent = both ? 'AB' : (loopAMs ? 'A' : '');
+    badge.style.display = (both || loopAMs) ? '' : 'none';
+    btn.classList.toggle('active', !!(both || loopAMs));
+  }
+  const band = document.getElementById('loopBand');
+  if (!band) return;
+  if (!(loopAMs && loopBMs && loopBMs > loopAMs && T1 > T0)) {
+    band.style.display = 'none';
+    return;
+  }
+  const pct = ms => ((ms - T0) / (T1 - T0)) * 100;
+  band.style.left = pct(loopAMs) + '%';
+  band.style.width = Math.max(0.4, pct(loopBMs) - pct(loopAMs)) + '%';
+  band.style.display = 'block';
+}
+function setLoopPoint(which) {
+  if (N === 0) return;
+  if (which === 'a') loopAMs = state.currentMs;
+  else loopBMs = state.currentMs;
+  // Swap if set out of order.
+  if (loopAMs && loopBMs && loopBMs < loopAMs) {
+    const t = loopAMs; loopAMs = loopBMs; loopBMs = t;
+  }
+  updateLoopBand();
+  showStatus(loopAMs && loopBMs
+    ? `Loop ${fmtSec((loopAMs - T0) / 1000)} – ${fmtSec((loopBMs - T0) / 1000)}`
+    : `Loop point ${which.toUpperCase()} set`);
+}
+function clearLoop() {
+  loopAMs = 0; loopBMs = 0;
+  updateLoopBand();
+  showStatus('Loop cleared');
 }
 
 // ============================================================================
@@ -4207,6 +4631,10 @@ function tick(nowMs) {
       const dt = Math.min(100, nowMs - lastFrame);
       if (state.playing) {
         state.currentMs += dt * state.speed;
+        if (loopAMs && loopBMs && loopBMs > loopAMs
+            && state.currentMs > loopBMs) {
+          state.currentMs = loopAMs;    // A-B loop wraps inside the band
+        }
         if (state.currentMs > T1) state.currentMs = T0;
       }
       const pos = pilotAt(state.currentMs);
@@ -4402,6 +4830,73 @@ function setupAppUi() {
   const altLineCb = document.getElementById('altLineCb');
   altLineCb.checked = state.showAltLine;
   altLineCb.addEventListener('change', e => { state.showAltLine = e.target.checked; });
+  const xcTriCb = document.getElementById('xcTriCb');
+  xcTriCb.checked = state.showXcTri;
+  xcTriCb.addEventListener('change', e => { state.showXcTri = e.target.checked; });
+  // mm:ss formatter shared by the track/curtain hold + fade-time sliders.
+  // Unlike the old single trail-fade slider, 0 is now a plain valid value
+  // (an instant hold or an instant fade) rather than a special "off" --
+  // "off" is solely the job of the fade-enable checkbox next to each pair.
+  const fmtMS = s => {
+    s = Math.max(0, Math.round(s));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  };
+
+  const curtainCb = document.getElementById('curtainCb');
+  curtainCb.checked = state.showCurtain;
+  const curtainFadeRows = ['rowCurtainFadeCb', 'rowCurtainHold', 'rowCurtainFade']
+    .map(id => document.getElementById(id)).filter(Boolean);
+  const syncCurtainFadeRows = () => {
+    for (const row of curtainFadeRows) row.style.display = state.showCurtain ? '' : 'none';
+  };
+  curtainCb.addEventListener('change', e => { state.showCurtain = e.target.checked; syncCurtainFadeRows(); });
+  syncCurtainFadeRows();
+
+  const curtainFadeCb = document.getElementById('curtainFadeCb');
+  curtainFadeCb.checked = state.curtainFadeOn;
+  curtainFadeCb.addEventListener('change', e => { state.curtainFadeOn = e.target.checked; });
+
+  const curtainHoldSlider = document.getElementById('curtainHold');
+  const curtainHoldV = document.getElementById('curtainHoldV');
+  curtainHoldSlider.addEventListener('input', e => {
+    state.curtainHoldSec = parseInt(e.target.value, 10) || 0;
+    curtainHoldV.textContent = fmtMS(state.curtainHoldSec);
+  });
+  curtainHoldV.textContent = fmtMS(state.curtainHoldSec);
+
+  const curtainFadeSlider = document.getElementById('curtainFade');
+  const curtainFadeV = document.getElementById('curtainFadeV');
+  curtainFadeSlider.addEventListener('input', e => {
+    state.curtainFadeSec = parseInt(e.target.value, 10) || 0;
+    curtainFadeV.textContent = fmtMS(state.curtainFadeSec);
+  });
+  curtainFadeV.textContent = fmtMS(state.curtainFadeSec);
+
+  const trackFadeCb = document.getElementById('trackFadeCb');
+  trackFadeCb.checked = state.trackFadeOn;
+  trackFadeCb.addEventListener('change', e => { state.trackFadeOn = e.target.checked; });
+
+  const trackHoldSlider = document.getElementById('trackHold');
+  const trackHoldV = document.getElementById('trackHoldV');
+  trackHoldSlider.addEventListener('input', e => {
+    state.trackHoldSec = parseInt(e.target.value, 10) || 0;
+    trackHoldV.textContent = fmtMS(state.trackHoldSec);
+  });
+  trackHoldV.textContent = fmtMS(state.trackHoldSec);
+  const recUiCb = document.getElementById('recordFullUi');
+  if (recUiCb) {
+    recUiCb.checked = state.recordFullUi;
+    recUiCb.addEventListener('change', e => { state.recordFullUi = e.target.checked; });
+  }
+  document.getElementById('loopSetA').onclick = () => setLoopPoint('a');
+  document.getElementById('loopSetB').onclick = () => setLoopPoint('b');
+  document.getElementById('loopClear').onclick = () => clearLoop();
+  // Transport-bar A-B button cycles: set A -> set B -> clear.
+  document.getElementById('loopBtn').onclick = () => {
+    if (!loopAMs) setLoopPoint('a');
+    else if (!loopBMs) setLoopPoint('b');
+    else clearLoop();
+  };
 
   // ----- Unified drag dispatch ------------------------------------------
   // Combines: (a) follow-mode orbit/exit gestures, (b) optional left/right
@@ -4841,61 +5336,18 @@ function setupAppUi() {
   window._refreshSpiralStatus = refreshSpiralStatus;
   // ---------- end spiral reconstruction overlay handlers ----------
 
-  // Trail-fade duration: how many seconds behind the pilot the past track
-  // stays fully bright before fading to transparent. 0 = off (no fade).
-  // Max stretches to the full loaded flight duration via
-  // updateTrailFadeMax(). Step auto-scales to ~10% of the current value
-  // (or 10 s when under a minute) so the wheel / arrow nudges feel right
-  // across the whole range.
-  // Geometry isn't affected so we don't invalidate pathDataCache; the
-  // PathLayer's updateTriggers pick up state.trailFadeSec on the next
-  // frame.
+  // Track fade time: once a flown segment has aged past state.trackHoldSec
+  // (wired above), it fades to transparent over this many seconds -- only
+  // while state.trackFadeOn is checked. Geometry isn't affected so we don't
+  // invalidate pathDataCache; the PathLayer's updateTriggers pick up
+  // state.trailFadeSec on the next frame.
   const trailFadeSlider = document.getElementById('trailFade');
   const trailFadeV      = document.getElementById('trailFadeV');
-  function fmtTrailFade(s) {
-    if (!(s > 0)) return 'off';
-    s = Math.round(s);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s - h * 3600) / 60);
-    const r = s - h * 3600 - m * 60;
-    const pad = n => (n < 10 ? '0' : '') + n;
-    return h > 0 ? h + ':' + pad(m) + ':' + pad(r) : m + ':' + pad(r);
-  }
-  function trailFadeStep(v) {
-    if (v < 60) return 10;
-    return Math.max(1, Math.round(v * 0.1));
-  }
-  function applyTrailFadeStep() {
-    trailFadeSlider.step = String(trailFadeStep(state.trailFadeSec));
-  }
   trailFadeSlider.addEventListener('input', e => {
-    let v = parseFloat(e.target.value);
-    if (!isFinite(v) || v < 0) v = 0;
-    const hi = parseFloat(trailFadeSlider.max);
-    if (isFinite(hi) && v > hi) v = hi;
-    state.trailFadeSec = v;
-    trailFadeV.textContent = fmtTrailFade(v);
-    applyTrailFadeStep();
+    state.trailFadeSec = parseInt(e.target.value, 10) || 0;
+    trailFadeV.textContent = fmtMS(state.trailFadeSec);
   });
-  trailFadeV.textContent = fmtTrailFade(state.trailFadeSec);
-  applyTrailFadeStep();
-
-  // Called from loadFlight() once T0/T1 are known: stretch the slider's
-  // upper bound to the full flight duration so "no fade across the whole
-  // flight" is reachable. Current value is clamped down if the new flight
-  // is shorter than the previously loaded one. Step is recomputed too so
-  // the wheel/arrow increment matches the (possibly) clamped value.
-  window.updateTrailFadeMax = function () {
-    if (!(T1 > T0)) return;
-    const total = Math.max(10, Math.ceil((T1 - T0) / 1000));
-    trailFadeSlider.max = String(total);
-    if (state.trailFadeSec > total) {
-      state.trailFadeSec = total;
-      trailFadeSlider.value = String(total);
-      trailFadeV.textContent = fmtTrailFade(total);
-    }
-    applyTrailFadeStep();
-  };
+  trailFadeV.textContent = fmtMS(state.trailFadeSec);
 
   // ----- Universal slider/number ergonomics -----
   // * Double-click  -> restore the control's data-default value
@@ -4961,18 +5413,18 @@ function setupAppUi() {
       ['tube3d', state.tube3d], ['smoothSubdiv', state.smoothSubdiv],
       ['smoothTension', state.smoothTension], ['kmlRateHz', state.kmlRateHz],
       ['spiralTPS', state.spiralTurnsPerSec], ['spiralThr', state.spiralThreshold],
-      ['trailFade', state.trailFadeSec],
+      ['trackHold', state.trackHoldSec], ['trailFade', state.trailFadeSec],
       ['maxUp', state.varioMaxUp], ['maxDown', state.varioMaxDown],
       ['pilotSize', state.pilotSize], ['orbitSpeed', state.orbitSpeedDeg],
       ['orbitResume', state.orbitResumeSec],
+      ['curtainHold', state.curtainHoldSec], ['curtainFade', state.curtainFadeSec],
     ];
     for (const [id, v] of restore) {
       const el = document.getElementById(id);
+      // Old persisted values that no longer fit a control's range clamp
+      // instead of applying verbatim -- e.g. an old Curve-strength 3.0
+      // landing on the new 0..1 Rounding scale.
       if (!el || String(el.value) === String(v)) continue;
-      // Only trailFade legitimately exceeds its HTML max (it stretches to
-      // the flight duration). Everything else clamps -- e.g. an old
-      // persisted Curve-strength 3.0 lands on the new 0..1 Rounding scale.
-      if (id === 'trailFade' && parseFloat(el.max) < v) el.max = String(v);
       el.value = v;
       dispatchInput(el);
     }
@@ -5014,7 +5466,9 @@ function setupAppUi() {
     setFollow(true);
     setSwapButtons(FACTORY_STATE.swapButtons);
     for (const [id, key] of [['autoTrim', 'autoTrim'],
-        ['airspaceShow', 'airspaceShow'], ['altLineCb', 'showAltLine']]) {
+        ['airspaceShow', 'airspaceShow'], ['altLineCb', 'showAltLine'],
+        ['xcTriCb', 'showXcTri'], ['curtainCb', 'showCurtain'],
+        ['trackFadeCb', 'trackFadeOn'], ['curtainFadeCb', 'curtainFadeOn']]) {
       const cb = document.getElementById(id);
       if (cb && cb.checked !== FACTORY_STATE[key]) {
         cb.checked = FACTORY_STATE[key];
@@ -5647,6 +6101,41 @@ function setupAppUi() {
   }
 
   const chartEl = document.getElementById('chart');
+
+  // Wheel over the chart zooms the time axis around the cursor
+  // (double-click resets). Scrub-drag and click-to-seek are unaffected --
+  // they read the live axis range.
+  chartEl.addEventListener('wheel', e => {
+    if (N === 0) return;
+    const gd = document.getElementById('chart');
+    const fl2 = gd._fullLayout;
+    if (!fl2 || !fl2.xaxis || !fl2.xaxis._rl || !fl2.xaxis._length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const xa = fl2.xaxis;
+    const rect = gd.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1,
+      (e.clientX - rect.left - (xa._offset || 0)) / xa._length));
+    if (Math.abs(e.deltaY) < 0.5) return;   // horizontal trackpad scroll
+    const [r0, r1] = xa._rl;
+    const full0 = tzShiftMs(T0), full1 = tzShiftMs(T1);
+    const factor = e.deltaY < 0 ? 0.75 : 1 / 0.75;
+    let span = Math.max(15000, Math.min((r1 - r0) * factor, full1 - full0));
+    const center = r0 + frac * (r1 - r0);
+    let n0 = center - frac * span;
+    n0 = Math.max(full0, Math.min(full1 - span, n0));
+    if (!isFinite(n0) || !isFinite(span)) return;
+    // Plotly date axes want ISO strings -- numeric ms silently degrades
+    // the axis and blanks the traces.
+    chartXRange = span >= (full1 - full0) * 0.999
+      ? null
+      : [new Date(n0).toISOString(), new Date(n0 + span).toISOString()];
+    refreshChart();
+  }, { passive: false });
+  chartEl.addEventListener('dblclick', () => {
+    if (chartXRange) { chartXRange = null; refreshChart(); }
+  });
+
   // iOS re-dispatches a compatibility mouse sequence (mousedown/mouseup/
   // click) ~300 ms after every touch; those ghost events double-seek and
   // can carry edge coordinates (a visible flick to the flight start
@@ -5725,6 +6214,12 @@ function setupAppUi() {
 
   // Open another file from inside the app
   document.getElementById('loadBtn').onclick = () => fileInput.click();
+  // Add-comparison-track button mirrors the settings "Add track" control.
+  const addTrackBtn = document.getElementById('addTrackBtn');
+  if (addTrackBtn) addTrackBtn.onclick = () => {
+    const inp = document.getElementById('cmpFileInput');
+    if (inp) inp.click();
+  };
 
   // Help overlay
   const helpOverlay = document.getElementById('helpOverlay');
@@ -5756,6 +6251,9 @@ function setupAppUi() {
         e.preventDefault(); return;
       case 'Home': seekToMs(T0); seekBy(0); e.preventDefault(); return;
       case 'End':  seekToMs(T1); seekBy(0); e.preventDefault(); return;
+      case '[': setLoopPoint('a'); return;
+      case ']': setLoopPoint('b'); return;
+      case '\\': clearLoop(); return;
       case '?':    setHelp(helpOverlay.classList.contains('hidden')); return;
       case 'Escape':
         if (!helpOverlay.classList.contains('hidden')) setHelp(false);
@@ -6096,11 +6594,23 @@ function loadFlight(newFixes, filename, opts) {
   // Init map on first load, hook up app UI
   initMap();
   setupAppUi();
-  if (typeof window.updateTrailFadeMax === 'function') window.updateTrailFadeMax();
   state.chartTrack = -1;      // chart shows the (possibly new) main flight
+  chartXRange = null;         // reset any chart zoom
+  loopAMs = 0; loopBMs = 0;   // A-B loop belongs to the previous flight
+  updateLoopBand();
+  computeAirspaceViolations();
   renderStatsPanel();
   buildProgressTicks();
   renderCmpList();            // primary selector / chart pilot toggle sync
+  // Freeze panel transitions briefly: the (persisted-open) chart panel
+  // used to play its slide-in across the fading landing screen.
+  {
+    const chartP = document.getElementById('chartPanel');
+    if (chartP) {
+      chartP.classList.add('noTrans');
+      setTimeout(() => chartP.classList.remove('noTrans'), 600);
+    }
+  }
   // Kick off DEM sampling eagerly so the chart's y-axis floor is
   // anchored to true ground min as soon as tiles arrive, whether or not
   // the user has toggled the Ground trace on.
@@ -6326,6 +6836,31 @@ async function renderRecentList() {
 }
 renderRecentList();
 
+// Landing-screen demo flight: fetches the bundled demo.igc (works when the
+// page is served over HTTP(S) -- e.g. GitHub Pages; hidden on file://).
+(function wireDemoButton() {
+  const wrap = document.getElementById('demoWrap');
+  const btn = document.getElementById('demoBtn');
+  if (!wrap || !btn || !/^https?:$/.test(location.protocol)) return;
+  wrap.style.display = '';
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = 'Loading demo…';
+    try {
+      const resp = await fetch('demo.igc');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const text = await resp.text();
+      const fx = parseFlightFile(text, 'demo.igc');
+      if (!fx.length) throw new Error('parse failed');
+      loadedFlightData = { text, filename: 'demo.igc' };
+      loadFlight(fx, 'demo.igc');
+    } catch (e) {
+      btn.textContent = 'Demo unavailable — ' + e.message;
+      btn.disabled = false;
+    }
+  };
+})();
+
 // ============================================================================
 //  Comparison tracks -- replay several flights side by side
 // ============================================================================
@@ -6516,7 +7051,8 @@ function buildCmpLayers() {
       parameters: { depthTest: true, depthMask: true },
       updateTriggers: {
         getColor: [state.currentMs, state.showFuture,
-                   state.trailFadeSec, state.cmpAlign],
+                   state.trackHoldSec, state.trailFadeSec, state.trackFadeOn,
+                   state.cmpAlign],
         getWidth: state.trackWidth,
       },
     }));
@@ -6527,7 +7063,7 @@ function buildCmpLayers() {
     if (!pos) return;
     const head = cmpHeadingAt(tr, ms);
     const s = state.pilotSize;
-    const mpp = Math.min(mPerPx(pos[1], zoom), PILOT_MAX_MPP);
+    const mpp = pilotMpp(mPerPx(pos[1], zoom));
     const r = 6 * s * mpp;
     const circle = pilotPolygon(pos[0], pos[1], pos[2], head, discXY(r, 24));
     const tri = pilotPolygon(pos[0], pos[1], pos[2], head, [
@@ -6626,6 +7162,7 @@ function renderChartPilotToggle() {
     b.classList.toggle('active', state.chartTrack === idx);
     b.addEventListener('click', () => {
       state.chartTrack = idx;
+      chartXRange = null;      // zoom window belongs to the previous pilot
       renderChartPilotToggle();
       refreshChart();
     });
@@ -6871,11 +7408,38 @@ function oaArcPoints(center, rDegLat, a0, a1, dir, out) {
     ]);
   }
 }
+// OpenAir altitude limit -> metres AMSL (or AGL-relative when flagged).
+// Handles: SFC/GND, UNL, FL85, "4500ft", "4500 ft AMSL", "1350m", "2000 M".
+// OpenAir's default unit is feet; an explicit M (not "MSL") means metres.
+function oaAltMeters(str) {
+  if (!str) return null;
+  const s = String(str).trim().toUpperCase();
+  if (/^(SFC|GND)/.test(s)) return { m: 0, agl: true };
+  if (/UNL/.test(s)) return { m: 1e9, agl: false };
+  const fl = s.match(/FL\s*(\d+)/);
+  if (fl) return { m: parseInt(fl[1], 10) * 30.48, agl: false };
+  const num = s.match(/(\d+(?:\.\d+)?)\s*(M(?!SL)|FT|')?/);
+  if (!num) return null;
+  let v = parseFloat(num[1]);
+  if (num[2] !== 'M') v *= 0.3048;
+  return { m: v, agl: /\b(AGL|GND|SFC)\b/.test(s) };
+}
+
 function parseOpenAir(text) {
   const zones = [];
   let cur = null, center = null, dir = 1;
   const flush = () => {
-    if (cur && cur.points.length >= 3) zones.push(cur);
+    if (cur && cur.points.length >= 3) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const [x, y] of cur.points) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+      cur.bbox = [minX, minY, maxX, maxY];
+      cur.floorL = oaAltMeters(cur.floor);
+      cur.ceilL = oaAltMeters(cur.ceil);
+      zones.push(cur);
+    }
     cur = null;
   };
   for (const raw of text.split(/\r?\n/)) {
@@ -6985,6 +7549,75 @@ function applyAirspaceToMap() {
     console.warn('airspace render failed', e);
   }
 }
+// ---------------------------------------------------------------------------
+// Airspace violation check. Every fix is tested against every zone
+// (bbox-prefiltered ray-cast point-in-polygon + floor/ceiling altitude,
+// AGL limits resolved against the DEM samples). While an airspace file is
+// shown, the 3-D track switches to a muted single colour with the
+// violating stretches painted red; violations also appear as red marks on
+// the timeline and a clickable list in the stats panel.
+// ---------------------------------------------------------------------------
+let airspaceViolations = null;   // { mask: Uint8Array(N), segs: [...] } | null
+let airRev = 0;                  // bumped whenever the check re-runs
+
+function pointInRing(x, y, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    if (((yi > y) !== (yj > y))
+        && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function computeAirspaceViolations() {
+  airspaceViolations = null;
+  airRev++;
+  if (airspaceZones.length && N > 0) {
+    const mask = new Uint8Array(N);
+    const zoneHit = new Array(N).fill(null);
+    for (const z of airspaceZones) {
+      if (!z.bbox || !z.floorL || !z.ceilL) continue;
+      const [minX, minY, maxX, maxY] = z.bbox;
+      for (let i = 0; i < N; i++) {
+        if (mask[i]) continue;
+        const f = fixes[i];
+        if (f.lon < minX || f.lon > maxX
+            || f.lat < minY || f.lat > maxY) continue;
+        const gnd = groundAlt && !Number.isNaN(groundAlt[i])
+          ? groundAlt[i] : null;
+        const lo = z.floorL.agl
+          ? (gnd == null ? null : gnd + z.floorL.m) : z.floorL.m;
+        const hi = z.ceilL.agl
+          ? (gnd == null ? null : gnd + z.ceilL.m) : z.ceilL.m;
+        if (lo == null || hi == null) continue;   // AGL limit, DEM not in yet
+        const alt = altOf(f);
+        if (alt < lo || alt > hi) continue;
+        if (pointInRing(f.lon, f.lat, z.points)) {
+          mask[i] = 1;
+          zoneHit[i] = z;
+        }
+      }
+    }
+    const segs = [];
+    let i = 0;
+    while (i < N) {
+      if (!mask[i]) { i++; continue; }
+      const start = i, z = zoneHit[i];
+      while (i < N && mask[i]) i++;
+      segs.push({ i0: start, i1: i - 1,
+                  name: (z && (z.name || z.cls)) || 'airspace' });
+    }
+    if (segs.length) airspaceViolations = { mask, segs };
+  }
+  buildProgressTicks();
+  renderStatsPanel();
+  renderDirty = true;
+}
+
 function wireAirspaceUi() {
   const input = document.getElementById('airspaceFileInput');
   const loadBtn = document.getElementById('airspaceLoadBtn');
@@ -7005,11 +7638,13 @@ function wireAirspaceUi() {
       ? `${airspaceZones.length} zones from ${f.name}`
       : 'No zones found (OpenAir format?)';
     applyAirspaceToMap();
+    computeAirspaceViolations();
   });
   clearBtn.onclick = () => {
     airspaceZones = [];
     statusEl.textContent = 'No file loaded';
     applyAirspaceToMap();
+    computeAirspaceViolations();
   };
   showCb.addEventListener('change', e => {
     state.airspaceShow = e.target.checked;
@@ -7282,19 +7917,33 @@ function recSyncButtons(on) {
     if (b.id === 'recBtn') b.textContent = on ? 'Stop & save' : 'Start recording';
   }
 }
-function toggleRecording() {
+async function toggleRecording() {
   if (recCtl.recorder) { recCtl.recorder.stop(); return; }
   if (!map) return;
   const mime = pickRecordingMime();
-  let recorder;
+  // Full-UI mode: screen capture records the page exactly as shown --
+  // every panel, button and the settings window. The browser prompts for
+  // a source (pick "This Tab"). Map-only mode composites the map + HUD +
+  // chart onto an offscreen canvas (no prompt, clean output).
+  const wantFull = state.recordFullUi
+    && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia;
+  let stream, displayStream = null;
   try {
-    // Record the compositor canvas (map + Live HUD + chart), not the raw
-    // map canvas -- see recComp above.
-    const stream = startComposite().captureStream(30);
-    recorder = new MediaRecorder(stream,
+    if (wantFull) {
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 }, audio: false,
+        preferCurrentTab: true, selfBrowserSurface: 'include',
+      });
+      stream = displayStream;
+    } else {
+      stream = startComposite().captureStream(30);
+    }
+    var recorder = new MediaRecorder(stream,
       { mimeType: mime || undefined, videoBitsPerSecond: 8_000_000 });
   } catch (e) {
-    stopComposite();
+    if (!wantFull) stopComposite();
+    if (displayStream) displayStream.getTracks().forEach(t => t.stop());
+    if (e && e.name === 'NotAllowedError') { showStatus('Recording cancelled'); return; }
     showStatus('Recording unavailable: ' + e.message, true);
     return;
   }
@@ -7302,7 +7951,8 @@ function toggleRecording() {
   recCtl.chunks = [];
   recorder.ondataavailable = e => { if (e.data && e.data.size) recCtl.chunks.push(e.data); };
   recorder.onstop = () => {
-    stopComposite();
+    if (!wantFull) stopComposite();
+    if (displayStream) displayStream.getTracks().forEach(t => t.stop());
     const type = recorder.mimeType || mime || 'video/webm';
     const ext = /mp4/.test(type) ? '.mp4' : '.webm';
     recCtl.recorder = null;
@@ -7312,9 +7962,16 @@ function toggleRecording() {
       showStatus('Saved as .webm (H.264 unavailable — use VLC on macOS)');
     }
   };
+  // If the user stops sharing via the browser's own control, finalise too.
+  if (displayStream) {
+    displayStream.getVideoTracks()[0].addEventListener('ended', () => {
+      if (recCtl.recorder) recCtl.recorder.stop();
+    });
+  }
   recorder.start(1000);
   recSyncButtons(true);
-  showStatus('Recording… includes Live HUD & chart when open');
+  showStatus(wantFull ? 'Recording the full page…'
+                      : 'Recording… map, Live HUD & chart');
 }
 
 function wireExportUi() {

@@ -4,3 +4,5 @@
 *.kml
 .DS_Store
 .claude/
+
+!demo.igc

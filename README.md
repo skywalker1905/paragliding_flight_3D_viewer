@@ -10,19 +10,19 @@ airspace overlay, and full playback control. Settings and recent flights
 persist locally. No build step, no server, no account.
 
 **Try it online:**
-<https://skywalker1905.github.io/paragliding_flight_3D_viewer/> — open
-the page and drop in your own flight file. Nothing is uploaded; all
-processing stays in your browser.
+<https://skywalker1905.github.io/paragliding_flight_3D_viewer/> — hit
+**Try a demo flight**, or drop in your own file. Nothing is uploaded;
+all processing stays in your browser.
 
 ## Screenshots
 
 Landing screen — waiting for a file:
 
-![Landing screen](images/open_file.png)
+![Landing screen](images/Initial_page.png)
 
 Loaded flight — full GUI:
 
-![Loaded GUI](images/GUI.png)
+![Loaded GUI](images/3D_Track_View.png)
 
 ## Quick start
 
@@ -99,6 +99,8 @@ cached them or have been opened online at least once.
 - The trail **ends exactly under the pilot marker** — the boundary
   fix-to-fix segment is re-sampled along the spline each frame so there
   is no overshoot, even on low-rate IGCs.
+- **Track curtain** (settings): translucent vario-tinted wall from the
+  track down to the terrain — a strong 3-D depth cue, SeeYou-style.
 - **Track-ahead toggle** in the bottom bar: hides the unflown portion
   by default; click to show the full track at full opacity.
 - **Track fade** slider (settings): seconds of fully-bright trail
@@ -173,6 +175,10 @@ cached them or have been opened online at least once.
   longitude-only UTC offset when `tz-lookup` is unavailable.
 - Click to seek, or **press and drag** (mouse or touch) to scrub
   continuously; the cursor line shows the current playback time.
+- **Mouse-wheel zooms the time axis** around the cursor (double-click
+  resets to the full flight).
+- In multi-track mode a pilot toggle in the header switches whose data
+  the chart shows.
 - Draggable header, resizable corner (grip shown bottom-right).
 
 ### Flight statistics & thermals
@@ -181,11 +187,19 @@ cached them or have been opened online at least once.
   max speed, total ascent, track length, straight distance, max
   distance from takeoff — plus IGC header info (pilot, glider, site)
   when present.
+- **XC triangle on the map**: the best triangle is drawn in white with
+  markers at the three turnpoints and a red closing-gap line
+  (toggle: settings → Track & display → XC triangle).
 - **Thermal detection**: sustained-circling segments (≥ 540° of
   rotation with altitude gain) are listed with duration, turns, gain
   and average climb — click one to jump straight to it. Thermals also
   appear as orange spans under the timeline, alongside green (takeoff)
   and blue (max altitude) ticks.
+- **Airspace violation check**: with an OpenAir file loaded, every fix
+  is tested against zone polygons and floor/ceiling limits (FL, ft/m,
+  AGL via the DEM). The track switches to a muted colour with violating
+  stretches in red, violations show as red marks on the timeline, and
+  the stats panel lists each incursion (click to jump).
 - **Wind estimation**: while circling, the mean drift of the track is
   fitted per thermal; the HUD shows the estimate nearest to the current
   playback time (speed, arrow, and the direction the wind blows *from*).
@@ -203,6 +217,9 @@ cached them or have been opened online at least once.
 - **Start at takeoff** (settings, on by default): playback begins at the
   detected takeoff instead of the minutes of standing around that IGC
   loggers usually record.
+- **A-B loop**: repeat a section — `[` sets the start, `]` the end
+  (`\` clears; buttons in settings too). The looped band is highlighted
+  on the timeline.
 - Speed control 0.1× – 120×: drag the small slider, scroll the wheel
   (up = faster, 1 step / Shift = 10 steps), single-click the readout to
   cycle common presets (0.5 / 1 / 2 / 5 / 10 / 30 / 60 / 120×),
@@ -222,6 +239,13 @@ cached them or have been opened online at least once.
 - **Pilot name labels** float above every marker in multi-track mode.
   Rename them in settings → Comparison tracks, or simply click a label
   on the map while paused and type (CJK names supported).
+- **Live gaps in the HUD**: horizontal distance and altitude difference
+  to every other pilot at the synced moment.
+- Tracks **auto-fade** (5 min trail) in multi-pilot mode so the screen
+  stays readable; the Track-fade slider overrides.
+- A **primary pilot** selector (transport bar and settings) swaps any
+  track into the main slot — camera, HUD, chart, statistics and
+  timeline all follow, and the playback moment is preserved.
 
 ### Airspace overlay
 - Load an **OpenAir** (`.txt`) airspace file (settings → **Airspace**).
