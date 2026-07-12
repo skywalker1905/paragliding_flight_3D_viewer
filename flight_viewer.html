@@ -1217,7 +1217,7 @@
         <div class="secBody closed" data-secbody="kk7">
         <div class="row">
           <span class="lbl" title="Overlay data from thermal.kk7.ch on the map. Thermals = probability of finding a usable climb (up to zoom 12); Skyways = heatmap of all recorded flights (up to zoom 13). Also toggled by the ♨ button on the map. Works without a flight loaded — use 'Explore thermal map' on the start screen.">Show overlay</span>
-          <div class="ctl"><input type="checkbox" id="kk7ShowCb"></div>
+          <div class="ctl"><input type="checkbox" id="kk7ShowCb" checked></div>
         </div>
         <div class="row">
           <span class="lbl" title="Probability of finding a usable thermal, given it is reachable in free flight.">Thermals layer</span>
@@ -1225,13 +1225,13 @@
         </div>
         <div class="row">
           <span class="lbl" title="All recorded flights stacked on top of each other — where people actually fly.">Skyways layer</span>
-          <div class="ctl"><input type="checkbox" id="kk7SkywaysCb" checked></div>
+          <div class="ctl"><input type="checkbox" id="kk7SkywaysCb"></div>
         </div>
         <div class="row">
           <span class="lbl" title="Opacity of the kk7 overlay tiles. Double-click to reset.">Opacity</span>
           <div class="ctl">
-            <input type="range" id="kk7Opacity" min="0.1" max="1" step="0.05" value="0.55" data-default="0.55" style="width:120px">
-            <span id="kk7OpacityV" style="min-width:36px;color:var(--fg-dim)">55%</span>
+            <input type="range" id="kk7Opacity" min="0.1" max="1" step="0.05" value="0.3" data-default="0.3" style="width:120px">
+            <span id="kk7OpacityV" style="min-width:36px;color:var(--fg-dim)">30%</span>
           </div>
         </div>
         <div class="row">
@@ -2356,7 +2356,7 @@ const PERSIST_KEYS = [
   'kk7Show', 'kk7Thermals', 'kk7Skyways', 'kk7Opacity', 'kk7Season', 'kk7Tod',
   'openaipKey', 'openaipShow',
 ];
-const PREFS_SCHEMA = 4;
+const PREFS_SCHEMA = 5;
 const PERSIST_SET = new Set(PERSIST_KEYS);
 function loadSavedPrefs() {
   try {
@@ -2442,10 +2442,12 @@ const rawState = {
                         //   left-pan / right-rotate mapping.
   pilotLabel: '',       // display name for the main pilot's marker label
                         //   (multi-track mode); empty = "P1"
-  camStyle: 'orbit',    // follow style: 'orbit' (default) circles slowly
-                        //   around the pilot; 'center' keeps the pilot
-                        //   centred with heading under user control;
-                        //   'chase' looks along the direction of flight.
+  camStyle: 'director', // follow style: 'director' (default) auto-frames
+                        //   cinematically from the flight structure;
+                        //   'orbit' circles slowly around the pilot;
+                        //   'center' keeps the pilot centred with heading
+                        //   under user control; 'chase' looks along the
+                        //   direction of flight.
   orbitSpeedDeg: 4,     // orbit camera angular speed (deg/s)
   orbitResumeSec: 3,    // idle time after a manual drag before the orbit
                         //   rotation resumes
@@ -2474,10 +2476,10 @@ const rawState = {
 
   // thermal.kk7.ch overlay (thermal probability + skyways heatmaps).
   // Master switch also lives on the map as the ♨ control button.
-  kk7Show: false,       // master on/off for the whole kk7 overlay
-  kk7Thermals: true,    // thermal-probability layer (≤ z12)
-  kk7Skyways: true,     // skyways flight-density layer (≤ z13)
-  kk7Opacity: 0.55,     // raster opacity for both kk7 layers
+  kk7Show: true,        // master on/off for the whole kk7 overlay
+  kk7Thermals: true,    // thermal-probability layer (≤ z12), on by default
+  kk7Skyways: false,    // skyways flight-density layer (≤ z13), off by default
+  kk7Opacity: 0.3,      // raster opacity for both kk7 layers
   kk7Season: 'all',     // 'all' | 'jan' | 'apr' | 'jul' | 'oct' (±1.5 months)
   kk7Tod: 'all',        // 'all' | '04' | '07' | '10' (hours after sunrise)
 
@@ -2501,13 +2503,19 @@ const FACTORY_STATE = JSON.parse(JSON.stringify(rawState));
       rawState[k] = saved[k];
     }
   }
-  // Schema 2 made Orbit the default camera. Preferences saved before that
-  // carry the old 'center' default the user never actively chose -- apply
-  // the new defaults once; the user's next explicit pick persists again.
+  // On a schema bump, re-apply the defaults that changed meaning or value
+  // so a stale saved default the user never actively chose doesn't stick
+  // around; the user's next explicit pick persists again as usual.
   if (saved._schema !== PREFS_SCHEMA) {
-    rawState.camStyle = 'orbit';
+    // Schema 5: Director camera and the kk7 thermal layer became the
+    // defaults (thermals on at 30% opacity, skyways off).
+    rawState.camStyle = 'director';
     rawState.orbitSpeedDeg = 4;
     rawState.showCurtain = true;
+    rawState.kk7Show = true;
+    rawState.kk7Thermals = true;
+    rawState.kk7Skyways = false;
+    rawState.kk7Opacity = 0.3;
     // Schema 4 split the single trail-fade slider into independent
     // hold/fade-time pairs for the track and the curtain, each gated by
     // its own on/off switch. Force the new factory defaults once so a
