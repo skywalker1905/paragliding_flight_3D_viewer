@@ -360,6 +360,12 @@
     pointer-events: none;
   }
   #dropOverlay.active { display: grid; }
+  /* Explore-map mode (no flight loaded): hide every control that needs a
+     track. The Open-file button stays so a flight can be loaded in place. */
+  body.noTrack #progressGroup, body.noTrack #grpPlay,
+  body.noTrack #addTrackBtn, body.noTrack #toggleChart,
+  body.noTrack #toggleFuture, body.noTrack #toggleStats,
+  body.noTrack #hud { display: none !important; }
   #dropOverlay .sub { font-size: 13px; color: var(--fg-dim);
                        font-weight: 400; margin-top: 6px; }
 
@@ -821,6 +827,13 @@
           &#x25B6;&nbsp; Try a demo flight
         </button>
       </div>
+      <div style="margin-top:10px">
+        <button id="exploreBtn" class="btn-primary"
+                title="Browse the map with thermal &amp; skyways heatmaps from thermal.kk7.ch — no flight file needed"
+                style="background:rgba(255,255,255,0.08);border:1px solid var(--bd-2)">
+          &#x2668;&nbsp; Explore thermal map
+        </button>
+      </div>
       <div id="landingHint" style="display:none;margin-top:12px;font-size:12px;color:var(--good)"></div>
       <div id="landingError" style="display:none;margin-top:12px;font-size:12px;color:var(--bad)"></div>
     </div>
@@ -891,12 +904,13 @@
           <div class="ctl"><input type="checkbox" id="followCam" checked></div>
         </div>
         <div class="row">
-          <span class="lbl" title="Center: camera stays centred on the pilot, heading under your control. Chase: camera turns to look along the direction of flight. Orbit: camera circles slowly around the pilot while following — shows the 3D track from all sides.">Camera style</span>
+          <span class="lbl" title="Center: camera stays centred on the pilot, heading under your control. Chase: camera turns to look along the direction of flight. Orbit: camera circles slowly around the pilot while following — shows the 3D track from all sides. Director: cinematic auto-framing driven by the flight itself — orbits inside thermals, chases on glides, pulls back wide at takeoff and landing. Great for video export.">Camera style</span>
           <div class="ctl">
             <div class="toggle" id="camStyle">
               <button data-v="center">Center</button>
               <button data-v="chase">Chase</button>
               <button data-v="orbit">Orbit</button>
+              <button data-v="director">Director</button>
             </div>
           </div>
         </div>
@@ -1189,12 +1203,70 @@
           <span class="lbl" style="font-size:11px;color:var(--fg-mute)">Status</span>
           <span id="airspaceStatus" style="font-size:11px;color:var(--fg-dim)">No file loaded</span>
         </div>
+        <div class="row">
+          <span class="lbl" title="Worldwide airspace map tiles from openAIP, loaded automatically once a key is set. Get a free key at www.openaip.net (create an account, then Settings → API clients). The key is stored locally in this browser only.">openAIP key</span>
+          <div class="ctl"><input type="text" id="openaipKey" class="cmpLabel" style="width:130px" placeholder="free key from openaip.net" maxlength="64"></div>
+        </div>
+        <div class="row" id="rowOpenaipShow">
+          <span class="lbl" title="Show / hide the openAIP airspace tile overlay (needs the key above).">Show openAIP</span>
+          <div class="ctl"><input type="checkbox" id="openaipShowCb" checked></div>
+        </div>
+        </div>
+
+        <div class="sec closed" data-sec="kk7"><span class="chev">&#x25BE;</span><span>Thermal map (kk7)</span></div>
+        <div class="secBody closed" data-secbody="kk7">
+        <div class="row">
+          <span class="lbl" title="Overlay data from thermal.kk7.ch on the map. Thermals = probability of finding a usable climb (up to zoom 12); Skyways = heatmap of all recorded flights (up to zoom 13). Also toggled by the ♨ button on the map. Works without a flight loaded — use 'Explore thermal map' on the start screen.">Show overlay</span>
+          <div class="ctl"><input type="checkbox" id="kk7ShowCb"></div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Probability of finding a usable thermal, given it is reachable in free flight.">Thermals layer</span>
+          <div class="ctl"><input type="checkbox" id="kk7ThermalsCb" checked></div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="All recorded flights stacked on top of each other — where people actually fly.">Skyways layer</span>
+          <div class="ctl"><input type="checkbox" id="kk7SkywaysCb" checked></div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Opacity of the kk7 overlay tiles. Double-click to reset.">Opacity</span>
+          <div class="ctl">
+            <input type="range" id="kk7Opacity" min="0.1" max="1" step="0.05" value="0.55" data-default="0.55" style="width:120px">
+            <span id="kk7OpacityV" style="min-width:36px;color:var(--fg-dim)">55%</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Season filter: statistics restricted to ±1.5 months around the given month (same quarters as thermal.kk7.ch). Default: whole year.">Season</span>
+          <div class="ctl">
+            <div class="toggle" id="kk7Season">
+              <button data-v="all">All</button>
+              <button data-v="jan" title="January ±1.5 months">Jan</button>
+              <button data-v="apr" title="April ±1.5 months">Apr</button>
+              <button data-v="jul" title="July ±1.5 months">Jul</button>
+              <button data-v="oct" title="October ±1.5 months">Oct</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Time-of-day filter: hours after sunrise (+4 h ≈ morning, +7 h ≈ midday, +10 h ≈ late afternoon). Default: all day.">Time of day</span>
+          <div class="ctl">
+            <div class="toggle" id="kk7Tod">
+              <button data-v="all">All</button>
+              <button data-v="04" title="≈4 hours after sunrise (morning)">+4h</button>
+              <button data-v="07" title="≈7 hours after sunrise (midday)">+7h</button>
+              <button data-v="10" title="≈10 hours after sunrise (late afternoon)">+10h</button>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--fg-mute);line-height:1.5">
+          Data © <a href="https://thermal.kk7.ch" target="_blank" rel="noopener" style="color:var(--fg-dim)">thermal.kk7.ch</a>
+          (CC-BY-NC-SA) · thermals ≤ z12, skyways ≤ z13
+        </div>
         </div>
 
         <div class="sec closed" data-sec="offline"><span class="chev">&#x25BE;</span><span>Offline map</span></div>
         <div class="secBody closed" data-secbody="offline">
         <div class="row">
-          <span class="lbl" title="Fetches all satellite + terrain tiles covering this flight (several zoom levels) and saves them as a single .fvmap file. Load it later via Open / drag-and-drop to replay this flight with no network.">Save map file</span>
+          <span class="lbl" title="Fetches all satellite + terrain tiles covering this flight (several zoom levels) and saves them as a single .fvmap file. Load it later via Open / drag-and-drop to replay this flight with no network. With no flight loaded (explore-map mode) the pack covers the current viewport instead. Enabled kk7 thermal/skyways layers are bundled too, at the currently selected season/time filter.">Save map file</span>
           <div class="ctl"><button id="offlineDlBtn" class="btn-small">Download tiles&hellip;</button></div>
         </div>
         <div class="row">
@@ -2096,7 +2168,7 @@ function buildSpiralLayers() {
     jointRounded: true,
     parameters: { depthTest: true, depthMask: true },
     updateTriggers: {
-      getColor: [state.currentMs, state.showFuture,
+      getColor: [fadeColorClock(state.trackFadeOn), state.showFuture,
                  state.trackHoldSec, state.trailFadeSec, state.trackFadeOn],
       getWidth: state.trackWidth,
     },
@@ -2281,6 +2353,8 @@ const PERSIST_KEYS = [
   'orbitSpeedDeg', 'orbitResumeSec', 'showXcTri', 'showCurtain',
   'recordFullUi', 'curtainFadeSec', 'trackFadeOn', 'trackHoldSec',
   'curtainFadeOn', 'curtainHoldSec',
+  'kk7Show', 'kk7Thermals', 'kk7Skyways', 'kk7Opacity', 'kk7Season', 'kk7Tod',
+  'openaipKey', 'openaipShow',
 ];
 const PREFS_SCHEMA = 4;
 const PERSIST_SET = new Set(PERSIST_KEYS);
@@ -2397,6 +2471,21 @@ const rawState = {
                         //   Only takes effect when curtainFadeOn is true.
   recordFullUi: true,   // record everything on screen (settings, panels)
                         //   via screen capture; off = clean map+HUD+chart
+
+  // thermal.kk7.ch overlay (thermal probability + skyways heatmaps).
+  // Master switch also lives on the map as the ♨ control button.
+  kk7Show: false,       // master on/off for the whole kk7 overlay
+  kk7Thermals: true,    // thermal-probability layer (≤ z12)
+  kk7Skyways: true,     // skyways flight-density layer (≤ z13)
+  kk7Opacity: 0.55,     // raster opacity for both kk7 layers
+  kk7Season: 'all',     // 'all' | 'jan' | 'apr' | 'jul' | 'oct' (±1.5 months)
+  kk7Tod: 'all',        // 'all' | '04' | '07' | '10' (hours after sunrise)
+
+  // openAIP worldwide airspace raster overlay. Tiles need a free API key
+  // (openaip.net → account → API clients); stored locally only. When a key
+  // is present the overlay loads automatically.
+  openaipKey: '',
+  openaipShow: true,
 };
 
 // Pristine factory defaults, captured BEFORE saved preferences merge in.
@@ -2710,6 +2799,11 @@ function offlineKeyForUrl(url) {
   if (m) return `dem/${m[1]}/${m[2]}/${m[3]}`;
   m = url.match(/tile\.openstreetmap\.org\/(\d+)\/(\d+)\/(\d+)\.png/);
   if (m) return `osm/${m[1]}/${m[2]}/${m[3]}`;
+  // kk7 thermal / skyways overlay -- keyed with the full style token so a
+  // bundle only answers for the exact season / time-of-day it was built
+  // with (other filter combinations simply fall through to the network).
+  m = url.match(/thermal\.kk7\.ch\/tiles\/wmts\/([a-z0-9_]+)\/(\d+)\/(\d+)\/(\d+)\.png/);
+  if (m) return `kk7/${m[1]}/${m[2]}/${m[3]}/${m[4]}`;
   return null;
 }
 function transformTileRequest(url) {
@@ -2731,7 +2825,7 @@ function transformTileRequest(url) {
 // left raster sources permanently empty -- so it is deliberately avoided.)
 function reloadMapStyle() {
   if (!map) return;
-  for (const id of ['sat', 'osm', 'terrarium']) {
+  for (const id of ['sat', 'osm', 'terrarium', 'kk7-thermals', 'kk7-skyways']) {
     const src = map.getSource(id);
     if (src && src.setTiles && src.tiles) {
       try { src.setTiles(src.tiles.slice()); }
@@ -2755,14 +2849,32 @@ function tileRangeForBounds(z, west, south, east, north) {
 }
 
 async function buildOfflineMap() {
-  if (N === 0) {
-    showStatus('Load a flight first — tiles are fetched for its area', true);
+  // Area: the loaded flight's bounding box, or -- in explore-map mode with
+  // no track -- the current viewport, so thermal/skyway browsing can be
+  // taken offline too.
+  let west, east, south, north;
+  if (N > 0) {
+    west = lonMin - 0.02; east = lonMax + 0.02;
+    south = latMin - 0.02; north = latMax + 0.02;
+  } else if (map) {
+    const b = map.getBounds();
+    west = b.getWest(); east = b.getEast();
+    south = b.getSouth(); north = b.getNorth();
+    if (east - west > 4 || north - south > 4) {
+      showStatus('Zoom in first — the visible area is too large for an offline pack', true);
+      return;
+    }
+  } else {
+    showStatus('Load a flight or open the map first', true);
     return;
   }
-  const west = lonMin - 0.02, east = lonMax + 0.02;
-  const south = latMin - 0.02, north = latMax + 0.02;
   const baseKind = state.base;          // bundle the basemap currently in use
   const DEM_MAX = 14;                   // what the AGL / chart sampler reads
+  // kk7 overlay layers currently enabled ride along, at the CURRENT
+  // season / time-of-day filter (other combinations stay online-only).
+  const kk7Kinds = [];
+  if (state.kk7Show && state.kk7Thermals) kk7Kinds.push('thermals');
+  if (state.kk7Show && state.kk7Skyways) kk7Kinds.push('skyways');
 
   // Basemap zoom ceiling auto-reduces to stay under the tile cap.
   let baseMax = 16;
@@ -2770,19 +2882,31 @@ async function buildOfflineMap() {
     let n = 0;
     for (let z = 8; z <= max; z++) n += tileRangeForBounds(z, west, south, east, north).count;
     for (let z = 8; z <= DEM_MAX; z++) n += tileRangeForBounds(z, west, south, east, north).count;
+    for (const kind of kk7Kinds)
+      for (let z = 8; z <= KK7_MAXZOOM[kind]; z++)
+        n += tileRangeForBounds(z, west, south, east, north).count;
     return n;
   };
   while (baseMax > 12 && totalFor(baseMax) > OFFLINE_MAX_TILES) baseMax--;
 
   const jobs = [];
-  const addLevel = (kind, z) => {
+  const addLevel = (kind, z, urlOf) => {
     const r = tileRangeForBounds(z, west, south, east, north);
     for (let x = r.x0; x <= r.x1; x++)
       for (let y = r.y0; y <= r.y1; y++)
-        jobs.push({ key: `${kind}/${z}/${x}/${y}`, url: makeTileUrl(kind, z, x, y) });
+        jobs.push({
+          key: urlOf ? offlineKeyForUrl(urlOf(z, x, y)) : `${kind}/${z}/${x}/${y}`,
+          url: urlOf ? urlOf(z, x, y) : makeTileUrl(kind, z, x, y),
+        });
   };
   for (let z = 8; z <= baseMax; z++) addLevel(baseKind, z);
   for (let z = 8; z <= DEM_MAX; z++) addLevel('dem', z);
+  for (const kind of kk7Kinds) {
+    const tpl = kk7TileTemplate(kind);
+    const urlOf = (z, x, y) =>
+      tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    for (let z = 8; z <= KK7_MAXZOOM[kind]; z++) addLevel('kk7', z, urlOf);
+  }
 
   const total = jobs.length;
   showStatus(`Downloading 0 / ${total} tiles…`);
@@ -2810,16 +2934,17 @@ async function buildOfflineMap() {
   };
   await Promise.all(Array.from({ length: 8 }, worker));
 
+  const packName = N > 0 ? exportBaseName() : 'map_area';
   const out = {
     fvmap: 1,
-    name: exportBaseName(),
+    name: packName,
     base: baseKind,
     created: new Date().toISOString(),
     bounds: [west, south, east, north],
     tiles,
   };
   const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
-  downloadBlob(blob, exportBaseName() + '.fvmap');
+  downloadBlob(blob, packName + '.fvmap');
   showStatus(`Offline map saved: ${Object.keys(tiles).length} tiles, `
     + `${(blob.size / 1048576).toFixed(1)} MB`
     + (failed ? ` (${failed} tiles failed)` : ''));
@@ -2911,6 +3036,98 @@ function buildMapStyle() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// thermal.kk7.ch overlay -- thermal-probability and skyways heatmap tiles.
+// The WMTS endpoint serves standard XYZ tile paths; the mandatory ?src=
+// parameter identifies the requesting site (must contain a dot, so local /
+// file:// sessions fall back to the deployed hostname). CC-BY-NC-SA.
+// ---------------------------------------------------------------------------
+const KK7_SRC = (location.hostname && location.hostname.includes('.'))
+  ? location.hostname : 'skywalker1905.github.io';
+const KK7_MAXZOOM = { thermals: 12, skyways: 13 };
+function kk7StyleToken(kind) {
+  return `${kind}_${state.kk7Season}_${state.kk7Tod}`;
+}
+function kk7TileTemplate(kind) {
+  return `https://thermal.kk7.ch/tiles/wmts/${kk7StyleToken(kind)}/{z}/{x}/{y}.png?src=${KK7_SRC}`;
+}
+// Create / retune the two kk7 raster layers to match state. Safe to call
+// any time after the style has loaded; call again whenever a kk7 setting
+// changes (visibility, opacity, season / time-of-day filter).
+// setTiles() aborts every in-flight tile request, so only call it when the
+// template REALLY changed -- the source object's .tiles never updates, so
+// track the applied URL ourselves.
+const _appliedTileUrl = {};
+function applyKk7Layers() {
+  if (!map || !mapReady) return;
+  try {
+    for (const kind of ['thermals', 'skyways']) {
+      const id = 'kk7-' + kind;
+      const url = kk7TileTemplate(kind);
+      const src = map.getSource(id);
+      if (!src) {
+        map.addSource(id, {
+          type: 'raster', tiles: [url], tileSize: 256,
+          maxzoom: KK7_MAXZOOM[kind],
+          attribution: 'Thermals © <a href="https://thermal.kk7.ch">thermal.kk7.ch</a> (CC-BY-NC-SA)',
+        });
+        map.addLayer({
+          id, type: 'raster', source: id,
+          layout: { visibility: 'none' },
+          paint: { 'raster-fade-duration': 0,
+                   'raster-opacity': state.kk7Opacity },
+        });
+        _appliedTileUrl[id] = url;
+      } else if (_appliedTileUrl[id] !== url) {
+        src.setTiles([url]);        // season / time-of-day filter changed
+        _appliedTileUrl[id] = url;
+      }
+      const on = state.kk7Show
+        && (kind === 'thermals' ? state.kk7Thermals : state.kk7Skyways);
+      map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+      map.setPaintProperty(id, 'raster-opacity', state.kk7Opacity);
+    }
+  } catch (e) { console.warn('kk7 overlay failed:', e); }
+  const btn = document.getElementById('btnKk7');
+  if (btn) btn.classList.toggle('active', state.kk7Show);
+  renderDirty = true;
+}
+
+// openAIP airspace raster overlay -- auto-loads once a (free) API key is
+// pasted into settings. Independent of the OpenAir-file vector airspace,
+// which keeps powering tap-for-info and violation alerts.
+function applyOpenAipLayer() {
+  if (!map || !mapReady) return;
+  const key = (state.openaipKey || '').trim();
+  try {
+    const id = 'openaip';
+    const src = map.getSource(id);
+    if (!key) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+      return;
+    }
+    const url = `https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${encodeURIComponent(key)}`;
+    if (!src) {
+      map.addSource(id, {
+        type: 'raster', tiles: [url], tileSize: 256, maxzoom: 14,
+        attribution: 'Airspace © <a href="https://www.openaip.net">openAIP</a>',
+      });
+      map.addLayer({
+        id, type: 'raster', source: id,
+        layout: { visibility: 'none' },
+        paint: { 'raster-fade-duration': 0 },
+      });
+      _appliedTileUrl[id] = url;
+    } else if (_appliedTileUrl[id] !== url) {
+      src.setTiles([url]);
+      _appliedTileUrl[id] = url;
+    }
+    map.setLayoutProperty(id, 'visibility',
+      state.openaipShow ? 'visible' : 'none');
+  } catch (e) { console.warn('openAIP overlay failed:', e); }
+  renderDirty = true;
+}
+
 function initMap() {
   if (map) return;
   document.getElementById('app').style.display = '';
@@ -2950,6 +3167,12 @@ function initMap() {
     { id: 'btnFollow', title: 'Toggle follow pilot (C)', icon: '&#x2316;', onClick: centerOnPilot },
     { id: 'btnFit', title: 'Fit whole track (R)', icon: '&#x2922;', onClick: () => fitTrack() },
     { id: 'btnSwap', title: 'Swap mouse/touch drag controls', icon: '&#x21cc;', onClick: () => { if (window._setSwapButtons) window._setSwapButtons(!state.swapButtons); } },
+    { id: 'btnKk7', title: 'Toggle thermal / skyways overlay (thermal.kk7.ch)', icon: '&#x2668;', onClick: () => {
+        state.kk7Show = !state.kk7Show;
+        applyKk7Layers();
+        const cb = document.getElementById('kk7ShowCb');
+        if (cb) cb.checked = state.kk7Show;
+      } },
   ]), 'top-right');
 
   map.on('load', () => {
@@ -2963,6 +3186,8 @@ function initMap() {
     }, { displayModeBar: false, responsive: true });
     chartReady = true;
     mapReady = true;
+    applyKk7Layers();
+    applyOpenAipLayer();
     configureMapZoom();
     if (window._wireMapGestures) window._wireMapGestures();
     if (pendingApply) { pendingApply(); pendingApply = null; }
@@ -2974,8 +3199,12 @@ function initMap() {
   // sampleGroundAlt().)
 
   map.on('error', e => {
+    // Aborted tile requests are not errors: setTiles() (kk7 / openAIP
+    // filter changes) and fast pans cancel in-flight fetches by design.
+    const msg = e && e.error && e.error.message || '';
+    if (msg === 'AbortError' || (e && e.error && e.error.name === 'AbortError')) return;
     console.error('MapLibre error:', e && e.error);
-    showStatus('Map error: ' + (e && e.error && e.error.message || 'see console'), true);
+    showStatus('Map error: ' + (msg || 'see console'), true);
   });
 
   // Any camera motion invalidates the battery-saver frame skip: the pilot
@@ -3193,18 +3422,82 @@ function buildTipData(data) {
 // Drop segments whose alpha is zero so they are neither drawn nor written
 // into the depth buffer. Invisible future / faded segments were still
 // occupying depth and occluding the pilot marker and the visible trail.
-function visiblePathData(data) {
-  return data.filter(d => segmentAlpha(d.tStart, d.tEnd) > 0);
+//
+// The visible set is always a CONTIGUOUS index range (segments are sorted
+// by time), so instead of filter()ing -- which allocates a brand-new array
+// every frame and makes deck.gl re-upload every attribute (and re-tessellate
+// the curtain polygons) at rAF rate -- we binary-search the range bounds
+// and keep returning the SAME array object until the range actually moves
+// (about once per second at 1x, instead of 60x/s).
+function idxLastEndAtOrBefore(data, t) {   // largest i with tEnd <= t, else -1
+  let lo = 0, hi = data.length - 1, res = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (data[m].tEnd <= t) { res = m; lo = m + 1; } else hi = m - 1;
+  }
+  return res;
 }
+function idxLastStartAtOrBefore(data, t) { // largest i with tStart <= t, else -1
+  let lo = 0, hi = data.length - 1, res = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (data[m].tStart <= t) { res = m; lo = m + 1; } else hi = m - 1;
+  }
+  return res;
+}
+// cache: { data, first, last, arr } -- one per consumer (main track,
+// curtain, each comparison track), reused across frames.
+function stableSlice(cache, data, first, last) {
+  if (cache.data === data && cache.first === first && cache.last === last) {
+    return cache.arr;
+  }
+  cache.data = data; cache.first = first; cache.last = last;
+  cache.arr = first > last ? []
+    : (first <= 0 && last >= data.length - 1) ? data
+    : data.slice(first, last + 1);
+  return cache.arr;
+}
+// Visible range for a hold+fade group. includeBoundary: the curtain (and
+// comparison tracks) draw the segment containing "now" themselves; the
+// main track excludes it because the tip layer covers it.
+function visibleFadeRange(data, now, holdSec, fadeSec, enabled, includeBoundary) {
+  const last = includeBoundary ? idxLastStartAtOrBefore(data, now)
+                               : idxLastEndAtOrBefore(data, now);
+  let first = 0;
+  if (enabled) {
+    // alpha reaches 0 exactly at age == hold+fade, so keep tEnd > cutoff.
+    const cutoff = now - (holdSec + fadeSec) * 1000;
+    first = idxLastEndAtOrBefore(data, cutoff) + 1;
+  }
+  return { first, last };
+}
+// updateTriggers clock for fade-dependent colors. While the fade is off,
+// per-segment alpha only changes when a new fix is crossed, so the current
+// fix index is enough; while fading, quantize to 250 ms -- recomputing
+// getColor for every segment at 4 Hz is visually identical to 60 Hz for
+// multi-second fades and drops the per-frame attribute churn.
+function fadeColorClock(enabled) {
+  if (state.showFuture) return -1;
+  return enabled ? Math.round(state.currentMs / 250) : findIdx(state.currentMs);
+}
+const _mainSliceCache = { data: null, first: -2, last: -2, arr: [] };
+const _curtainSliceCache = { data: null, first: -2, last: -2, arr: [] };
 
 function buildPathLayers() {
   const data = getPathData();
   if (!data.length) return [];
   const COLOR_TRIGGER = [
-    state.currentMs, state.showFuture,
+    fadeColorClock(state.trackFadeOn), state.showFuture,
     state.trackHoldSec, state.trailFadeSec, state.trackFadeOn,
   ];
-  const visible = visiblePathData(data);
+  let visible;
+  if (state.showFuture) {
+    visible = data;
+  } else {
+    const r = visibleFadeRange(data, state.currentMs, state.trackHoldSec,
+                               state.trailFadeSec, state.trackFadeOn, false);
+    visible = stableSlice(_mainSliceCache, data, r.first, r.last);
+  }
   const tipData = buildTipData(data);
   const layers = [];
 
@@ -3403,9 +3696,19 @@ function buildCurtainLayers() {
     return holdFadeAlpha(ageSec, state.curtainHoldSec, state.curtainFadeSec,
                           state.curtainFadeOn);
   };
+  // Stable data slice (see stableSlice): re-tessellating thousands of
+  // curtain quads every frame was the single biggest render cost.
+  let visible;
+  if (state.showFuture) {
+    visible = curtainCache;
+  } else {
+    const r = visibleFadeRange(curtainCache, now, state.curtainHoldSec,
+                               state.curtainFadeSec, state.curtainFadeOn, true);
+    visible = stableSlice(_curtainSliceCache, curtainCache, r.first, r.last);
+  }
   return [new deck.SolidPolygonLayer({
     id: 'track-curtain',
-    data: curtainCache.filter(d => alphaOf(d) > 0),
+    data: visible,
     getPolygon: d => d.polygon,
     // Translucent light-grey veil, opacity scaled by the curtain fade.
     getFillColor: d => [170, 185, 205, Math.round(alphaOf(d) * 0.35)],
@@ -3413,7 +3716,7 @@ function buildCurtainLayers() {
     parameters: { depthTest: true, depthMask: false,
                   cullMode: 'none', cullFace: false },
     updateTriggers: {
-      getFillColor: [state.currentMs, state.showFuture,
+      getFillColor: [fadeColorClock(state.curtainFadeOn), state.showFuture,
                      state.curtainHoldSec, state.curtainFadeSec,
                      state.curtainFadeOn],
     },
@@ -4655,6 +4958,10 @@ function tick(nowMs) {
             // sweeping the 3-D track is the whole point of the mode.
             if (state.camStyle === 'chase' && state.playing) {
               chaseCamFrame(head, dt);
+            } else if (state.camStyle === 'director' && state.playing
+                && nowMs - lastUserCamMs > state.orbitResumeSec * 1000) {
+              // Director resumes after manual drags exactly like Orbit.
+              directorCamFrame(head, dt);
             } else if (state.camStyle === 'orbit'
                 && nowMs - lastUserCamMs > state.orbitResumeSec * 1000) {
               // Resumes only after the user has left the camera alone for
@@ -4883,6 +5190,47 @@ function setupAppUi() {
     trackHoldV.textContent = fmtMS(state.trackHoldSec);
   });
   trackHoldV.textContent = fmtMS(state.trackHoldSec);
+
+  // ---------- thermal.kk7.ch overlay controls ----------
+  const kk7ShowCb = document.getElementById('kk7ShowCb');
+  kk7ShowCb.checked = state.kk7Show;
+  kk7ShowCb.addEventListener('change', e => {
+    state.kk7Show = e.target.checked; applyKk7Layers();
+  });
+  const kk7ThermalsCb = document.getElementById('kk7ThermalsCb');
+  kk7ThermalsCb.checked = state.kk7Thermals;
+  kk7ThermalsCb.addEventListener('change', e => {
+    state.kk7Thermals = e.target.checked; applyKk7Layers();
+  });
+  const kk7SkywaysCb = document.getElementById('kk7SkywaysCb');
+  kk7SkywaysCb.checked = state.kk7Skyways;
+  kk7SkywaysCb.addEventListener('change', e => {
+    state.kk7Skyways = e.target.checked; applyKk7Layers();
+  });
+  const kk7OpacitySlider = document.getElementById('kk7Opacity');
+  const kk7OpacityV = document.getElementById('kk7OpacityV');
+  kk7OpacitySlider.addEventListener('input', e => {
+    const v = parseFloat(e.target.value);
+    state.kk7Opacity = isFinite(v) ? v : 0.55;
+    kk7OpacityV.textContent = Math.round(state.kk7Opacity * 100) + '%';
+    applyKk7Layers();
+  });
+  kk7OpacityV.textContent = Math.round(state.kk7Opacity * 100) + '%';
+  initToggle('kk7Season', 'kk7Season', applyKk7Layers);
+  initToggle('kk7Tod', 'kk7Tod', applyKk7Layers);
+
+  // ---------- openAIP airspace overlay controls ----------
+  const openaipKeyInput = document.getElementById('openaipKey');
+  openaipKeyInput.value = state.openaipKey || '';
+  openaipKeyInput.addEventListener('change', e => {
+    state.openaipKey = e.target.value.trim();
+    applyOpenAipLayer();
+  });
+  const openaipShowCb = document.getElementById('openaipShowCb');
+  openaipShowCb.checked = state.openaipShow;
+  openaipShowCb.addEventListener('change', e => {
+    state.openaipShow = e.target.checked; applyOpenAipLayer();
+  });
   const recUiCb = document.getElementById('recordFullUi');
   if (recUiCb) {
     recUiCb.checked = state.recordFullUi;
@@ -5418,6 +5766,7 @@ function setupAppUi() {
       ['pilotSize', state.pilotSize], ['orbitSpeed', state.orbitSpeedDeg],
       ['orbitResume', state.orbitResumeSec],
       ['curtainHold', state.curtainHoldSec], ['curtainFade', state.curtainFadeSec],
+      ['kk7Opacity', state.kk7Opacity],
     ];
     for (const [id, v] of restore) {
       const el = document.getElementById(id);
@@ -5444,6 +5793,7 @@ function setupAppUi() {
       ['colorMode', 'colorMode'], ['pilotShape', 'pilotShape'],
       ['camStyle', 'camStyle'], ['chartMetric', 'chartMetric'],
       ['cmpAlign', 'cmpAlign'],
+      ['kk7Season', 'kk7Season'], ['kk7Tod', 'kk7Tod'],
     ];
     for (const [id, key] of toggleKeys) {
       const btn = document.querySelector(
@@ -5468,13 +5818,20 @@ function setupAppUi() {
     for (const [id, key] of [['autoTrim', 'autoTrim'],
         ['airspaceShow', 'airspaceShow'], ['altLineCb', 'showAltLine'],
         ['xcTriCb', 'showXcTri'], ['curtainCb', 'showCurtain'],
-        ['trackFadeCb', 'trackFadeOn'], ['curtainFadeCb', 'curtainFadeOn']]) {
+        ['trackFadeCb', 'trackFadeOn'], ['curtainFadeCb', 'curtainFadeOn'],
+        ['kk7ShowCb', 'kk7Show'], ['kk7ThermalsCb', 'kk7Thermals'],
+        ['kk7SkywaysCb', 'kk7Skyways'], ['openaipShowCb', 'openaipShow']]) {
       const cb = document.getElementById(id);
       if (cb && cb.checked !== FACTORY_STATE[key]) {
         cb.checked = FACTORY_STATE[key];
         cb.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
+    // The openAIP key is a text input, not a checkbox -- clear it manually.
+    state.openaipKey = FACTORY_STATE.openaipKey;
+    const oaKey = document.getElementById('openaipKey');
+    if (oaKey) oaKey.value = '';
+    applyOpenAipLayer();
     applySpeedByIndex(speedToIndex(FACTORY_STATE.speed));
     state.pilotLabel = FACTORY_STATE.pilotLabel;
     state.showHud = FACTORY_STATE.showHud; updateHudVisibility();
@@ -6475,6 +6832,47 @@ function chaseCamFrame(headingDeg, dtMs) {
   suppressMoveDirty = false;
 }
 
+// Director camera: cinematic auto-framing driven by the flight's own
+// structure (the detected thermal segments). Thermalling -> slow orbit
+// around the climb; gliding -> chase along the direction of flight;
+// takeoff / landing -> pulled-back wide shot with a gentle drift. Pitch
+// eases between the phases so cuts read as camera moves, not jumps.
+function directorThermalAt(ms) {
+  for (const th of thermals) {
+    if (tMs[th.i0] > ms) break;
+    if (ms <= tMs[th.i1]) return th;
+  }
+  return null;
+}
+function directorCamFrame(headingDeg, dtMs) {
+  if (!map || N === 0) return;
+  const ms = state.currentMs;
+  const edgeSec = Math.min(ms - T0, T1 - ms) / 1000;
+  let pitchTarget;
+  suppressMoveDirty = true;
+  if (edgeSec < 20) {
+    // Takeoff / landing: wide establishing shot, slow pan.
+    pitchTarget = 45;
+    map.setBearing(map.getBearing() + 2 * dtMs / 1000);
+  } else if (directorThermalAt(ms)) {
+    // Thermalling: orbit the climb (at least the orbit-camera speed).
+    pitchTarget = 62;
+    map.setBearing(map.getBearing()
+      + Math.max(3, state.orbitSpeedDeg) * dtMs / 1000);
+  } else {
+    // Glide: look along the direction of flight.
+    pitchTarget = 55;
+    suppressMoveDirty = false;
+    chaseCamFrame(headingDeg, dtMs);
+    suppressMoveDirty = true;
+  }
+  const p = map.getPitch();
+  if (Math.abs(pitchTarget - p) > 0.1) {
+    map.setPitch(p + (pitchTarget - p) * Math.min(1, dtMs / 1200));
+  }
+  suppressMoveDirty = false;
+}
+
 function toggleFs(el) {
   if (document.fullscreenElement === el) document.exitFullscreen();
   else if (el.requestFullscreen) el.requestFullscreen();
@@ -6585,6 +6983,7 @@ function loadFlight(newFixes, filename, opts) {
   }
   setPlaying(true);
   lastFrame = performance.now();
+  document.body.classList.remove('noTrack');   // leaving explore-map mode
   document.title = filename ? `${filename} \u2014 Flight Viewer` : 'Flight Viewer';
 
   // Hide landing on first successful load
@@ -6861,6 +7260,39 @@ renderRecentList();
   };
 })();
 
+// Landing-screen "Explore thermal map": open the map with the kk7 overlay
+// and no flight loaded. The playback controls stay hidden (body.noTrack)
+// until a file is opened via the bottom-bar buttons or drag & drop.
+(function wireExploreButton() {
+  const btn = document.getElementById('exploreBtn');
+  if (!btn) return;
+  btn.onclick = () => {
+    landing.classList.add('hidden');
+    setTimeout(() => { landing.style.display = 'none'; }, 260);
+    document.body.classList.add('noTrack');
+    document.title = 'Thermal map — Flight Viewer';
+    initMap();
+    setupAppUi();
+    state.kk7Show = true;              // the whole point of the mode
+    const kkCb = document.getElementById('kk7ShowCb');
+    if (kkCb) kkCb.checked = true;
+    const applyView = (lon, lat, zoom) => {
+      const go = () => {
+        map.jumpTo({ center: [lon, lat], zoom, pitch: 0, bearing: 0 });
+        applyKk7Layers();
+      };
+      if (mapReady) go(); else map.once('load', go);
+    };
+    // Wide world view until geolocation answers (it usually does).
+    applyView(10, 30, 1.8);
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        p => applyView(p.coords.longitude, p.coords.latitude, 10),
+        () => {}, { maximumAge: 600000, timeout: 8000 });
+    }
+  };
+})();
+
 // ============================================================================
 //  Comparison tracks -- replay several flights side by side
 // ============================================================================
@@ -7036,9 +7468,20 @@ function buildCmpLayers() {
       (d.tStart <= cmpNow && d.tEnd > cmpNow)
         ? 255
         : segmentAlpha(d.tStart, d.tEnd, cmpNow);
+    // Same stable-slice treatment as the main track / curtain: keep the
+    // data reference unchanged until the visible range actually moves.
+    let cmpVisible;
+    if (state.showFuture) {
+      cmpVisible = tr.segData;
+    } else {
+      if (!tr._sliceCache) tr._sliceCache = { data: null, first: -2, last: -2, arr: [] };
+      const r = visibleFadeRange(tr.segData, cmpNow, state.trackHoldSec,
+                                 state.trailFadeSec, state.trackFadeOn, true);
+      cmpVisible = stableSlice(tr._sliceCache, tr.segData, r.first, r.last);
+    }
     layers.push(new deck.PathLayer({
       id: 'cmp-track-' + idx,
-      data: tr.segData.filter(d => alphaOf(d) > 0),
+      data: cmpVisible,
       getPath: d => d.path,
       getColor: d => {
         const a = alphaOf(d);
@@ -7050,7 +7493,7 @@ function buildCmpLayers() {
       billboard: true, capRounded: true, jointRounded: true,
       parameters: { depthTest: true, depthMask: true },
       updateTriggers: {
-        getColor: [state.currentMs, state.showFuture,
+        getColor: [fadeColorClock(state.trackFadeOn), state.showFuture,
                    state.trackHoldSec, state.trailFadeSec, state.trackFadeOn,
                    state.cmpAlign],
         getWidth: state.trackWidth,
