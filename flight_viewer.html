@@ -6834,9 +6834,24 @@ function chaseCamFrame(headingDeg, dtMs) {
 
 // Director camera: cinematic auto-framing driven by the flight's own
 // structure (the detected thermal segments). Thermalling -> slow orbit
-// around the climb; gliding -> chase along the direction of flight;
+// around the climb; gliding -> a slow pan onto the course over ground;
 // takeoff / landing -> pulled-back wide shot with a gentle drift. Pitch
 // eases between the phases so cuts read as camera moves, not jumps.
+//
+// Anti-judder design (the naive version steered onto the instantaneous
+// pilot heading every frame, which whips the camera around during every
+// wing-over and spins it wildly in any circling the thermal detector
+// missed):
+//   * The glide bearing target is the COURSE OVER GROUND across the last
+//     15 s of flight -- immune to short heading wiggles. If the pilot
+//     displaced less than ~100 m in that window they are circling, so the
+//     camera holds its bearing instead of steering.
+//   * Phase switches (wide / thermal / glide) only commit after the new
+//     phase has persisted for 8 s of flight time -- brief detector gaps
+//     no longer flip orbit/chase back and forth.
+//   * Bearing pans are rate-limited to 10 deg/s of real time on top of a
+//     gentle proportional ease, so even a 180-degree course change reads
+//     as a deliberate camera move.
 function directorThermalAt(ms) {
   for (const th of thermals) {
     if (tMs[th.i0] > ms) break;
@@ -6844,27 +6859,67 @@ function directorThermalAt(ms) {
   }
   return null;
 }
+// Course over ground across the trailing window, or null while circling /
+// hovering (displacement too small for a stable direction).
+function directorCourseAt(ms, windowMs) {
+  const a = pilotAt(ms - windowMs);
+  const b = pilotAt(ms);
+  const mPerLat = 111320;
+  const mPerLon = 111320 * Math.cos(b[1] * Math.PI / 180) || 1;
+  const dist = Math.hypot((b[0] - a[0]) * mPerLon, (b[1] - a[1]) * mPerLat);
+  if (dist < 100) return null;
+  return bearingDeg(a[1], a[0], b[1], b[0]);
+}
+let _dirPhase = 'glide';        // committed phase
+let _dirCandidate = null;       // phase waiting out the hysteresis window
+let _dirCandidateMs = 0;        // flight time when the candidate appeared
+let _dirLastMs = -1;            // to detect seeks / scrubs
 function directorCamFrame(headingDeg, dtMs) {
   if (!map || N === 0) return;
   const ms = state.currentMs;
   const edgeSec = Math.min(ms - T0, T1 - ms) / 1000;
+  const want = edgeSec < 20 ? 'wide'
+             : directorThermalAt(ms) ? 'thermal' : 'glide';
+  // A seek (backwards, or a jump of over a minute) resets the phase state
+  // so the camera adopts the new context immediately.
+  if (_dirLastMs < 0 || ms < _dirLastMs || ms - _dirLastMs > 60000) {
+    _dirPhase = want; _dirCandidate = null;
+  } else if (want !== _dirPhase) {
+    if (_dirCandidate !== want) {
+      _dirCandidate = want; _dirCandidateMs = ms;
+    } else if (ms - _dirCandidateMs >= 8000) {
+      _dirPhase = want; _dirCandidate = null;
+    }
+  } else {
+    _dirCandidate = null;
+  }
+  _dirLastMs = ms;
+
   let pitchTarget;
   suppressMoveDirty = true;
-  if (edgeSec < 20) {
+  if (_dirPhase === 'wide') {
     // Takeoff / landing: wide establishing shot, slow pan.
     pitchTarget = 45;
     map.setBearing(map.getBearing() + 2 * dtMs / 1000);
-  } else if (directorThermalAt(ms)) {
+  } else if (_dirPhase === 'thermal') {
     // Thermalling: orbit the climb (at least the orbit-camera speed).
     pitchTarget = 62;
     map.setBearing(map.getBearing()
       + Math.max(3, state.orbitSpeedDeg) * dtMs / 1000);
   } else {
-    // Glide: look along the direction of flight.
+    // Glide: pan slowly onto the smoothed course over ground.
     pitchTarget = 55;
-    suppressMoveDirty = false;
-    chaseCamFrame(headingDeg, dtMs);
-    suppressMoveDirty = true;
+    const course = directorCourseAt(ms, 15000);
+    if (course != null) {
+      const cur = map.getBearing();
+      let d = ((course - cur + 540) % 360) - 180;
+      if (Math.abs(d) > 0.05) {
+        const eased = d * Math.min(1, dtMs * 0.0008);
+        const maxStep = 10 * dtMs / 1000;          // ≤10 deg/s pan
+        map.setBearing(cur + Math.max(-maxStep, Math.min(maxStep, eased)));
+      }
+    }
+    // course == null: circling the detector missed -- hold the bearing.
   }
   const p = map.getPitch();
   if (Math.abs(pitchTarget - p) > 0.1) {
