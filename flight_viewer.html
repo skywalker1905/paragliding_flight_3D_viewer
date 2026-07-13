@@ -597,6 +597,35 @@
     border-radius: 2px; pointer-events: none; display: none; z-index: 2;
   }
 
+  /* Director timeline-shot bands on the progress bar */
+  #shotBands { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+  #shotBands .shotBand {
+    position: absolute; top: 20%; height: 60%;
+    background: rgba(167, 139, 250, 0.28);
+    border-left: 1px solid rgba(196, 181, 253, 0.9);
+    border-right: 1px solid rgba(196, 181, 253, 0.9);
+    border-radius: 2px;
+  }
+
+  /* Director shot rows in settings */
+  .dirShot {
+    border: 1px solid var(--bd-2); border-radius: 8px;
+    padding: 8px 10px; display: grid; gap: 6px; font-size: 12px;
+  }
+  .dirShot .shotHead {
+    display: flex; align-items: center; gap: 6px; color: var(--fg-dim);
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+  }
+  .dirShot .shotHead .rng { flex: 1; }
+  .dirShot .shotBtn {
+    background: rgba(255,255,255,0.05); border: 1px solid var(--bd-2);
+    color: var(--fg-dim); border-radius: 5px; padding: 1px 7px;
+    font-size: 10px; cursor: pointer;
+  }
+  .dirShot .shotBtn:hover { color: var(--fg); background: rgba(255,255,255,0.1); }
+  .dirShot .shotCtls { display: flex; align-items: center; gap: 6px;
+                       flex-wrap: wrap; }
+
   /* Airspace violation marks above the vario strip */
   #progTicks .tick.violation {
     background: rgba(239, 68, 68, 0.95);
@@ -980,6 +1009,68 @@
             <button id="fitTrack2" class="tbtn" title="Fit whole track (R)" style="width:auto;padding:0 10px">Fit</button>
           </div>
         </div>
+        </div>
+
+        <div class="sec" data-sec="director" id="secDirector" style="display:none"><span class="chev">&#x25BE;</span><span>Director camera</span></div>
+        <div class="secBody" data-secbody="director" id="secDirectorBody" style="display:none">
+        <div style="font-size:11px;color:var(--fg-mute);line-height:1.5;padding-bottom:2px">
+          Per-phase framing: first slider = distance (zoom, higher = closer),
+          second = tilt (pitch). The finale distance is automatic — it always
+          pulls back until the whole track fits.
+        </div>
+        <div class="row">
+          <span class="lbl" title="Opening wide shot right after takeoff.">Intro</span>
+          <div class="ctl">
+            <input type="range" id="dirZoomIntro" min="10" max="16" step="0.1" value="14.2" data-default="14.2" style="width:70px" title="Framing distance (zoom)">
+            <span id="dirZoomIntroV" style="min-width:30px;color:var(--fg-dim)">14.2</span>
+            <input type="range" id="dirPitchIntro" min="0" max="75" step="1" value="45" data-default="45" style="width:70px" title="Camera tilt (pitch)">
+            <span id="dirPitchIntroV" style="min-width:26px;color:var(--fg-dim)">45°</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Close orbit while circling in a detected thermal.">Thermal</span>
+          <div class="ctl">
+            <input type="range" id="dirZoomThermal" min="10" max="16" step="0.1" value="15" data-default="15" style="width:70px" title="Framing distance (zoom)">
+            <span id="dirZoomThermalV" style="min-width:30px;color:var(--fg-dim)">15.0</span>
+            <input type="range" id="dirPitchThermal" min="0" max="75" step="1" value="62" data-default="62" style="width:70px" title="Camera tilt (pitch)">
+            <span id="dirPitchThermalV" style="min-width:26px;color:var(--fg-dim)">62°</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Following the course over ground between thermals.">Glide</span>
+          <div class="ctl">
+            <input type="range" id="dirZoomGlide" min="10" max="16" step="0.1" value="14.6" data-default="14.6" style="width:70px" title="Framing distance (zoom)">
+            <span id="dirZoomGlideV" style="min-width:30px;color:var(--fg-dim)">14.6</span>
+            <input type="range" id="dirPitchGlide" min="0" max="75" step="1" value="55" data-default="55" style="width:70px" title="Camera tilt (pitch)">
+            <span id="dirPitchGlideV" style="min-width:26px;color:var(--fg-dim)">55°</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Closing overview: the camera releases the pilot and pulls back over the whole track. Distance is automatic.">Finale tilt</span>
+          <div class="ctl">
+            <input type="range" id="dirPitchFinale" min="0" max="75" step="1" value="48" data-default="48" style="width:70px" title="Camera tilt (pitch)">
+            <span id="dirPitchFinaleV" style="min-width:26px;color:var(--fg-dim)">48°</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="How long the opening wide shot lasts, in seconds of flight time.">Intro length</span>
+          <div class="ctl">
+            <input type="range" id="dirIntroSec" min="0" max="120" step="5" value="20" data-default="20" style="width:120px">
+            <span id="dirIntroSecV" style="min-width:36px;color:var(--fg-dim)">20 s</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="How long the closing full-track overview lasts, in seconds of flight time before landing.">Finale length</span>
+          <div class="ctl">
+            <input type="range" id="dirFinaleSec" min="10" max="240" step="5" value="60" data-default="60" style="width:120px">
+            <span id="dirFinaleSecV" style="min-width:36px;color:var(--fg-dim)">60 s</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Pin the camera for a chosen stretch of the flight — e.g. a close orbit over a ridge run. Scrub the timeline to the start of the moment and click: a 60 s shot is created at the playhead (edit its range, move, framing below). Inside a shot the automatic phases are overridden; outside, they resume. Shots are shown as bands on the timeline and belong to this flight only.">Timeline shots</span>
+          <div class="ctl"><button id="dirAddShot" class="btn-small">Add shot &#x2190; now</button></div>
+        </div>
+        <div id="dirShotList"></div>
         </div>
 
         <div class="sec" data-sec="display"><span class="chev">&#x25BE;</span><span>Track &amp; display</span></div>
@@ -1407,6 +1498,7 @@
         <div id="progWrap">
           <input type="range" id="progress" min="0" max="100" step="0.05" value="0">
           <div id="progTicks"></div>
+          <div id="shotBands"></div>
           <div id="loopBand"></div>
           <div id="progBubble"></div>
         </div>
@@ -2392,6 +2484,9 @@ const PERSIST_KEYS = [
   'curtainFadeOn', 'curtainHoldSec',
   'kk7Show', 'kk7Thermals', 'kk7Skyways', 'kk7Opacity', 'kk7Season', 'kk7Tod',
   'openaipKey', 'openaipShow',
+  'dirIntroSec', 'dirFinaleSec',
+  'dirZoomIntro', 'dirZoomThermal', 'dirZoomGlide',
+  'dirPitchIntro', 'dirPitchThermal', 'dirPitchGlide', 'dirPitchFinale',
 ];
 const PREFS_SCHEMA = 6;
 const PERSIST_SET = new Set(PERSIST_KEYS);
@@ -2513,6 +2608,16 @@ const rawState = {
 
   // thermal.kk7.ch overlay (thermal probability + skyways heatmaps).
   // Master switch also lives on the map as the ♨ control button.
+  // Director camera tuning. Per-phase framing distance (zoom) and tilt
+  // (pitch); the finale's zoom is always the auto-computed full-track
+  // fit, so it only carries a pitch. Intro/finale lengths in seconds of
+  // flight time.
+  dirIntroSec: 20,
+  dirFinaleSec: 60,
+  dirZoomIntro: 14.2, dirZoomThermal: 15.0, dirZoomGlide: 14.6,
+  dirPitchIntro: 45, dirPitchThermal: 62, dirPitchGlide: 55,
+  dirPitchFinale: 48,
+
   kk7Show: true,        // master on/off for the whole kk7 overlay
   kk7Thermals: true,    // thermal-probability layer (≤ z12), on by default
   kk7Skyways: false,    // skyways flight-density layer (≤ z13), off by default
@@ -5011,9 +5116,11 @@ function tick(nowMs) {
         if (!pinching) {
           // The Director finale frames the whole track instead of the
           // pilot -- recentering would fight its slow drift to the
-          // track centre. (Applies only while it is actually steering.)
+          // track centre. (Applies only while it is actually steering;
+          // a user shot inside the finale window is pilot-centred again.)
           const directorFinale = state.camStyle === 'director'
-            && _dirPhase === 'finale' && state.playing;
+            && _dirPhase === 'finale' && state.playing
+            && !dirShotAt(state.currentMs);
           if (!directorFinale) centerOnPilotFrame(pos, dt);
           if (!dragActive()) {
             // Chase steers only while playing (a paused user can drag
@@ -5105,9 +5212,17 @@ function setupAppUi() {
   const rowOrbitSpeed = document.getElementById('rowOrbitSpeed');
   const rowOrbitResume = document.getElementById('rowOrbitResume');
   const syncOrbitRow = () => {
-    const show = state.camStyle === 'orbit' ? '' : 'none';
-    rowOrbitSpeed.style.display = show;
-    rowOrbitResume.style.display = show;
+    // Orbit-speed sliders show for Orbit AND Director (its thermal orbit
+    // reuses the same speed); the Director tuning section only for
+    // Director itself.
+    const orbitish = state.camStyle === 'orbit' || state.camStyle === 'director';
+    rowOrbitSpeed.style.display = orbitish ? '' : 'none';
+    rowOrbitResume.style.display = orbitish ? '' : 'none';
+    const dir = state.camStyle === 'director' ? '' : 'none';
+    const sec = document.getElementById('secDirector');
+    const body = document.getElementById('secDirectorBody');
+    if (sec) sec.style.display = dir;
+    if (body) body.style.display = dir;
   };
   initToggle('camStyle', 'camStyle', syncOrbitRow);  // re-read every frame in tick
   syncOrbitRow();
@@ -5294,6 +5409,133 @@ function setupAppUi() {
   openaipShowCb.addEventListener('change', e => {
     state.openaipShow = e.target.checked; applyOpenAipLayer();
   });
+
+  // ---------- Director camera tuning ----------
+  const dirParams = [
+    ['dirZoomIntro',    v => v.toFixed(1)],
+    ['dirZoomThermal',  v => v.toFixed(1)],
+    ['dirZoomGlide',    v => v.toFixed(1)],
+    ['dirPitchIntro',   v => Math.round(v) + '°'],
+    ['dirPitchThermal', v => Math.round(v) + '°'],
+    ['dirPitchGlide',   v => Math.round(v) + '°'],
+    ['dirPitchFinale',  v => Math.round(v) + '°'],
+    ['dirIntroSec',     v => Math.round(v) + ' s'],
+    ['dirFinaleSec',    v => Math.round(v) + ' s'],
+  ];
+  for (const [key, fmt] of dirParams) {
+    const el = document.getElementById(key);
+    const vEl = document.getElementById(key + 'V');
+    if (!el) continue;
+    el.addEventListener('input', e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v)) state[key] = v;
+      if (vEl) vEl.textContent = fmt(state[key]);
+    });
+    if (vEl) vEl.textContent = fmt(state[key]);
+  }
+
+  // ---------- Director timeline shots ----------
+  const fmtFlightT = ms => {
+    const s = Math.max(0, Math.round((ms - T0) / 1000));
+    const p = n => String(n).padStart(2, '0');
+    return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
+  };
+  function normShot(s) {
+    if (s.endMs < s.startMs) { const t = s.startMs; s.startMs = s.endMs; s.endMs = t; }
+    if (s.endMs - s.startMs < 5000) s.endMs = Math.min(T1, s.startMs + 5000);
+    dirShots.sort((a, b) => a.startMs - b.startMs);
+  }
+  function renderShotBands() {
+    const box = document.getElementById('shotBands');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!(T1 > T0)) return;
+    for (const s of dirShots) {
+      const d = document.createElement('div');
+      d.className = 'shotBand';
+      d.style.left = ((s.startMs - T0) / (T1 - T0)) * 100 + '%';
+      d.style.width = Math.max(0.4, ((s.endMs - s.startMs) / (T1 - T0)) * 100) + '%';
+      box.appendChild(d);
+    }
+  }
+  function renderDirShots() {
+    const box = document.getElementById('dirShotList');
+    if (!box) return;
+    box.innerHTML = '';
+    const mkBtn = (txt, tip, fn) => {
+      const b = document.createElement('button');
+      b.className = 'shotBtn'; b.textContent = txt; b.title = tip;
+      b.onclick = fn; return b;
+    };
+    const mkSlider = (min, max, step, val, tip, fmt, onv) => {
+      const w = document.createElement('span');
+      w.style.cssText = 'display:inline-flex;align-items:center;gap:4px';
+      const inp = document.createElement('input');
+      inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step;
+      inp.value = val; inp.style.width = '64px'; inp.title = tip;
+      const v = document.createElement('span');
+      v.style.cssText = 'color:var(--fg-dim);font-size:11px;min-width:26px';
+      v.textContent = fmt(val);
+      inp.addEventListener('input', e => {
+        const x = parseFloat(e.target.value);
+        if (isFinite(x)) { onv(x); v.textContent = fmt(x); renderDirty = true; }
+      });
+      w.append(inp, v); return w;
+    };
+    dirShots.forEach((s, i) => {
+      const div = document.createElement('div');
+      div.className = 'dirShot';
+      const head = document.createElement('div');
+      head.className = 'shotHead';
+      const rng = document.createElement('span');
+      rng.className = 'rng';
+      rng.textContent = `#${i + 1} ${fmtFlightT(s.startMs)} → ${fmtFlightT(s.endMs)}`;
+      head.append(rng,
+        mkBtn('⇤ now', 'Set the shot start to the current playback time',
+          () => { s.startMs = state.currentMs; normShot(s); refreshShotUi(); }),
+        mkBtn('now ⇥', 'Set the shot end to the current playback time',
+          () => { s.endMs = state.currentMs; normShot(s); refreshShotUi(); }),
+        mkBtn('×', 'Delete this shot',
+          () => { dirShots.splice(dirShots.indexOf(s), 1); refreshShotUi(); }));
+      const ctls = document.createElement('div');
+      ctls.className = 'shotCtls';
+      const modeWrap = document.createElement('div');
+      modeWrap.className = 'toggle';
+      for (const [v, label, tip] of [
+        ['orbit', 'Orbit', 'Circle slowly around the pilot'],
+        ['follow', 'Follow', 'Look along the course over ground'],
+        ['fixed', 'Fixed', 'Hold the view direction; the terrain slides past'],
+      ]) {
+        const b = document.createElement('button');
+        b.textContent = label; b.title = tip;
+        if (s.mode === v) b.classList.add('active');
+        b.onclick = () => {
+          s.mode = v;
+          for (const x of modeWrap.children) x.classList.remove('active');
+          b.classList.add('active');
+          renderDirty = true;
+        };
+        modeWrap.appendChild(b);
+      }
+      ctls.append(modeWrap,
+        mkSlider(10, 16, 0.1, s.zoom, 'Framing distance (zoom)',
+          v => v.toFixed(1), v => { s.zoom = v; }),
+        mkSlider(0, 75, 1, s.pitch, 'Camera tilt (pitch)',
+          v => Math.round(v) + '°', v => { s.pitch = v; }));
+      div.append(head, ctls);
+      box.appendChild(div);
+    });
+  }
+  function refreshShotUi() { renderDirShots(); renderShotBands(); renderDirty = true; }
+  document.getElementById('dirAddShot').onclick = () => {
+    if (!N) return;
+    const startMs = Math.max(T0, Math.min(state.currentMs, T1 - 5000));
+    dirShots.push({ startMs, endMs: Math.min(T1, startMs + 60000),
+                    mode: 'orbit', zoom: 14.8, pitch: 60 });
+    dirShots.sort((a, b) => a.startMs - b.startMs);
+    refreshShotUi();
+  };
+  window._refreshShotUi = refreshShotUi;   // loadFlight clears + redraws
   const recUiCb = document.getElementById('recordFullUi');
   if (recUiCb) {
     recUiCb.checked = state.recordFullUi;
@@ -5851,6 +6093,11 @@ function setupAppUi() {
       ['orbitResume', state.orbitResumeSec],
       ['curtainHold', state.curtainHoldSec], ['curtainFade', state.curtainFadeSec],
       ['kk7Opacity', state.kk7Opacity],
+      ['dirZoomIntro', state.dirZoomIntro], ['dirZoomThermal', state.dirZoomThermal],
+      ['dirZoomGlide', state.dirZoomGlide], ['dirPitchIntro', state.dirPitchIntro],
+      ['dirPitchThermal', state.dirPitchThermal], ['dirPitchGlide', state.dirPitchGlide],
+      ['dirPitchFinale', state.dirPitchFinale], ['dirIntroSec', state.dirIntroSec],
+      ['dirFinaleSec', state.dirFinaleSec],
     ];
     for (const [id, v] of restore) {
       const el = document.getElementById(id);
@@ -6963,13 +7210,21 @@ function directorCourseAt(ms, windowMs) {
   if (dist < 100) return null;
   return bearingDeg(a[1], a[0], b[1], b[0]);
 }
-const DIR_INTRO_SEC  = 20;    // opening wide shot after takeoff
-const DIR_FINALE_SEC = 60;    // closing full-track overview before landing
-// The whole middle of the flight stays CLOSE -- thermalling just a touch
-// tighter than gliding -- so the pilot's actual motion over the ground
-// always reads; only the finale pulls back to the full-track wide shot.
-const DIR_ZOOM  = { intro: 14.2, thermal: 15.0, glide: 14.6 };
-const DIR_PITCH = { intro: 45, thermal: 62, glide: 55, finale: 48 };
+// Per-phase framing: the whole middle of the flight stays CLOSE --
+// thermalling just a touch tighter than gliding -- so the pilot's actual
+// motion over the ground always reads; only the finale pulls back to the
+// full-track wide shot. All values live in state (Director-camera
+// settings section) with these behaviours as the factory defaults.
+function dirZoomFor(phase) {
+  return phase === 'intro' ? state.dirZoomIntro
+       : phase === 'thermal' ? state.dirZoomThermal
+       : phase === 'glide' ? state.dirZoomGlide : null;   // finale: auto fit
+}
+function dirPitchFor(phase) {
+  return phase === 'intro' ? state.dirPitchIntro
+       : phase === 'thermal' ? state.dirPitchThermal
+       : phase === 'glide' ? state.dirPitchGlide : state.dirPitchFinale;
+}
 let _dirPhase = 'glide';        // committed phase
 let _dirCandidate = null;       // phase waiting out the hysteresis window
 let _dirCandidateMs = 0;        // flight time when the candidate appeared
@@ -6977,9 +7232,37 @@ let _dirLastMs = -1;            // to detect seeks / scrubs
 let _dirFitCam = null;          // {center, zoom} framing the whole track,
                                 //   computed on entering the finale
 function directorPhaseFor(ms) {
-  if ((T1 - ms) / 1000 < DIR_FINALE_SEC) return 'finale';
-  if ((ms - T0) / 1000 < DIR_INTRO_SEC) return 'intro';
+  if ((T1 - ms) / 1000 < state.dirFinaleSec) return 'finale';
+  if ((ms - T0) / 1000 < state.dirIntroSec) return 'intro';
   return directorThermalAt(ms) ? 'thermal' : 'glide';
+}
+
+// ---- Timeline shots: user-defined camera overrides for a time range ----
+// Each shot pins the framing (zoom + pitch) and the move (orbit / follow /
+// fixed) for [startMs, endMs); inside a shot the automatic phase logic
+// keeps tracking in the background but its camera output is replaced, so
+// leaving the shot falls back seamlessly. Shots belong to the loaded
+// flight (like the A-B loop) and are not persisted.
+let dirShots = [];              // sorted by startMs
+let _dirShotSeq = 0;
+function dirShotAt(ms) {
+  for (const s of dirShots) {
+    if (s.startMs > ms) break;
+    if (ms < s.endMs) return s;
+  }
+  return null;
+}
+// Shared by the glide phase and 'follow' shots: pan slowly onto the
+// smoothed course over ground, rate-limited; hold bearing while circling.
+function dirSteerToCourse(ms, dtMs) {
+  const course = directorCourseAt(ms, 15000);
+  if (course == null) return;    // circling -- hold the bearing
+  const cur = map.getBearing();
+  let d = ((course - cur + 540) % 360) - 180;
+  if (Math.abs(d) < 0.05) return;
+  const eased = d * Math.min(1, dtMs * 0.0008);
+  const maxStep = 10 * dtMs / 1000;              // ≤10 deg/s pan
+  map.setBearing(cur + Math.max(-maxStep, Math.min(maxStep, eased)));
 }
 // Camera that frames the entire track with some margin. cameraForBounds
 // computes for pitch 0; a tilted view sees further, so the result is
@@ -7020,29 +7303,36 @@ function directorCamFrame(headingDeg, dtMs) {
   }
 
   suppressMoveDirty = true;
-  if (_dirPhase === 'intro') {
+  const shot = dirShotAt(ms);
+  let zoomTarget, pitchTarget;
+  if (shot) {
+    // User-pinned shot overrides the automatic phase for this range.
+    zoomTarget = shot.zoom; pitchTarget = shot.pitch;
+    if (shot.mode === 'orbit') {
+      map.setBearing(map.getBearing()
+        + Math.max(3, state.orbitSpeedDeg) * dtMs / 1000);
+    } else if (shot.mode === 'follow') {
+      dirSteerToCourse(ms, dtMs);
+    }
+    // mode 'fixed': hold the bearing; the terrain slides past instead.
+  } else if (_dirPhase === 'intro') {
     // Wide establishing shot with a gentle drift, easing in.
+    zoomTarget = dirZoomFor('intro'); pitchTarget = dirPitchFor('intro');
     map.setBearing(map.getBearing() + 2 * dtMs / 1000);
   } else if (_dirPhase === 'thermal') {
     // Thermalling: orbit the climb (at least the orbit-camera speed).
+    zoomTarget = dirZoomFor('thermal'); pitchTarget = dirPitchFor('thermal');
     map.setBearing(map.getBearing()
       + Math.max(3, state.orbitSpeedDeg) * dtMs / 1000);
   } else if (_dirPhase === 'glide') {
     // Glide: pan slowly onto the smoothed course over ground.
-    const course = directorCourseAt(ms, 15000);
-    if (course != null) {
-      const cur = map.getBearing();
-      let d = ((course - cur + 540) % 360) - 180;
-      if (Math.abs(d) > 0.05) {
-        const eased = d * Math.min(1, dtMs * 0.0008);
-        const maxStep = 10 * dtMs / 1000;          // ≤10 deg/s pan
-        map.setBearing(cur + Math.max(-maxStep, Math.min(maxStep, eased)));
-      }
-    }
-    // course == null: circling the detector missed -- hold the bearing.
+    zoomTarget = dirZoomFor('glide'); pitchTarget = dirPitchFor('glide');
+    dirSteerToCourse(ms, dtMs);
   } else {
     // Finale: release the pilot, drift the frame onto the whole track
     // (tick skips centerOnPilotFrame in this phase) with a slow pan.
+    zoomTarget = _dirFitCam ? _dirFitCam.zoom : null;
+    pitchTarget = dirPitchFor('finale');
     map.setBearing(map.getBearing() + 3 * dtMs / 1000);
     if (_dirFitCam) {
       const c = map.getCenter();
@@ -7053,14 +7343,11 @@ function directorCamFrame(headingDeg, dtMs) {
       ]);
     }
   }
-  // Distance: every phase eases toward its own framing zoom.
-  const zoomTarget = _dirPhase === 'finale'
-    ? (_dirFitCam ? _dirFitCam.zoom : null) : DIR_ZOOM[_dirPhase];
+  // Distance: ease toward the framing zoom of the shot / phase.
   const z = map.getZoom();
   if (zoomTarget != null && Math.abs(zoomTarget - z) > 0.02) {
     map.setZoom(z + (zoomTarget - z) * Math.min(1, dtMs / 2500));
   }
-  const pitchTarget = DIR_PITCH[_dirPhase];
   const p = map.getPitch();
   if (Math.abs(pitchTarget - p) > 0.1) {
     map.setPitch(p + (pitchTarget - p) * Math.min(1, dtMs / 1200));
@@ -7198,6 +7485,8 @@ function loadFlight(newFixes, filename, opts) {
   loopAMs = 0; loopBMs = 0;   // A-B loop belongs to the previous flight
   _dirPhase = 'glide'; _dirCandidate = null;   // Director state belongs to
   _dirLastMs = -1; _dirFitCam = null;          //   the previous flight too
+  dirShots = [];                               // shots too (like the A-B loop)
+  if (window._refreshShotUi) window._refreshShotUi();
   updateLoopBand();
   computeAirspaceViolations();
   renderStatsPanel();
