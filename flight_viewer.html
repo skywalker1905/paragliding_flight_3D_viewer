@@ -1391,6 +1391,33 @@
         </div>
         </div>
 
+        <div class="sec closed" data-sec="sites"><span class="chev">&#x25BE;</span><span>Launch &amp; landing sites</span></div>
+        <div class="secBody closed" data-secbody="sites">
+        <div class="row">
+          <span class="lbl" title="Draw named sites on the map for briefing other pilots: a launch is a single point (orange), a landing zone is a polygon (green). Click the map to place; double-click or Done closes a polygon; Esc cancels. Sites are saved in this browser, can be exported/imported as GeoJSON, and ride along inside .fvmap packs.">Add site</span>
+          <div class="ctl">
+            <button id="siteAddLaunch" class="btn-small" style="color:#fb923c">Launch pt</button>
+            <button id="siteAddLz" class="btn-small" style="color:#4ade80">LZ polygon</button>
+          </div>
+        </div>
+        <div class="row" id="siteDrawRow" style="display:none">
+          <span class="lbl" id="siteDrawHint" style="color:var(--warn)">Click map to place…</span>
+          <div class="ctl">
+            <button id="siteDrawDone" class="btn-small">Done</button>
+            <button id="siteDrawCancel" class="btn-small" style="color:var(--fg-mute)">Cancel</button>
+          </div>
+        </div>
+        <div id="siteList" style="display:grid;gap:4px"></div>
+        <div class="row">
+          <span class="lbl" title="GeoJSON with a 'type' property (launch/lz) per feature — opens in Google Earth, QGIS, etc. Import merges by name.">Share</span>
+          <div class="ctl">
+            <button id="siteExport" class="btn-small">Export GeoJSON</button>
+            <button id="siteImport" class="btn-small">Import&hellip;</button>
+          </div>
+        </div>
+        </div>
+        <input type="file" id="siteFileInput" style="display:none" accept=".geojson,.json,application/geo+json,application/json">
+
         <div class="sec closed" data-sec="offline"><span class="chev">&#x25BE;</span><span>Offline map</span></div>
         <div class="secBody closed" data-secbody="offline">
         <div class="row">
@@ -1684,6 +1711,19 @@ function updateLaunchTimezone() {
   tzOffsetMin = Math.round(lon / 15) * 60;     // fallback, no DST
 }
 function fmtTzLabel() {
+  // Prefer the zone's own abbreviation (PDT, PST, MST...) evaluated at the
+  // flight's date so DST is respected. Intl yields "GMT+2"-style names for
+  // zones without a common abbreviation -- same information, fine. The
+  // plain UTC offset remains the no-tz-lookup (offline) fallback.
+  if (tzName) {
+    try {
+      const p = new Intl.DateTimeFormat('en-US',
+        { timeZone: tzName, timeZoneName: 'short' })
+        .formatToParts(new Date(T0 || Date.now()));
+      const n = p.find(x => x.type === 'timeZoneName');
+      if (n && n.value) return n.value;
+    } catch (_) { /* fall through to offset */ }
+  }
   const m = tzOffsetMin;
   const sign = m < 0 ? '-' : '+';
   const abs = Math.abs(m);
@@ -3222,12 +3262,20 @@ async function buildOfflineMap() {
   const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
     + `-${p2(d.getHours())}${p2(d.getMinutes())}`;
   const packName = `${region}_${stamp}`;
+  // Snapshot the launch/LZ sites inside the packed area so a shared pack
+  // briefs the receiving pilot too (merged on load, duplicates skipped).
+  const inArea = ([lon, lat]) =>
+    lon >= west && lon <= east && lat >= south && lat <= north;
+  const packSites = sites.filter(s => s.geom.kind === 'point'
+    ? inArea([s.geom.lon, s.geom.lat])
+    : s.geom.coords.some(inArea));
   const out = {
     fvmap: 1,
     name: packName,
     base: baseKind,
     created: new Date().toISOString(),
     bounds: [west, south, east, north],
+    sites: packSites,
     tiles,
   };
   const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
@@ -3254,6 +3302,18 @@ function loadOfflineMapText(text, filename) {
   offlineMapName = obj.name || filename.replace(/\.[^.]+$/, '');
   updateOfflineStatusUi();
   rememberOfflineMap(offlineMapName, obj.tiles);   // auto-restores next visit
+  // Merge any launch/LZ sites the pack carries (name+type dedupe).
+  if (Array.isArray(obj.sites) && obj.sites.length) {
+    let added = 0;
+    for (const s of obj.sites) {
+      if (!s || !s.geom || sites.some(x => x.name === s.name && x.type === s.type)) continue;
+      sites.push(s); added++;
+    }
+    if (added) {
+      saveSites(); applySitesLayer();
+      if (window._renderSiteList) window._renderSiteList();
+    }
+  }
   const msg = `Offline map loaded: ${offlineTiles.size} tiles (${offlineMapName})`;
   const landingEl = document.getElementById('landing');
   if (landingEl && !landingEl.classList.contains('hidden')) {
@@ -3287,6 +3347,105 @@ function wireOfflineUi() {
   updateOfflineStatusUi();
 }
 
+function wireSitesUi() {
+  const $ = id => document.getElementById(id);
+  if (!$('siteAddLaunch')) return;
+  const syncDrawUi = () => {
+    $('siteDrawRow').style.display = siteDraw ? '' : 'none';
+    if (siteDraw) {
+      $('siteDrawHint').textContent = siteDraw.kind === 'point'
+        ? 'Click the map to place the launch…'
+        : `Click to add points (${siteDraw.coords.length}) — Done / dbl-click closes`;
+      $('siteDrawDone').style.display = siteDraw.kind === 'point' ? 'none' : '';
+    }
+  };
+  window._syncSiteDrawUi = syncDrawUi;
+  const renderList = () => {
+    const box = $('siteList');
+    box.innerHTML = '';
+    sites.forEach((s, i) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const lbl = document.createElement('span');
+      lbl.className = 'lbl';
+      lbl.style.color = s.type === 'launch' ? '#fb923c' : '#4ade80';
+      lbl.style.cursor = 'pointer';
+      lbl.title = 'Click to fly to this site';
+      lbl.textContent = `${s.type === 'launch' ? '▲' : '▢'} ${s.name}`;
+      lbl.onclick = () => {
+        const [lon, lat] = s.geom.kind === 'point'
+          ? [s.geom.lon, s.geom.lat] : s.geom.coords[0];
+        if (map) map.flyTo({ center: [lon, lat], zoom: 14.5, duration: 900 });
+      };
+      const ctl = document.createElement('div');
+      ctl.className = 'ctl';
+      const ren = document.createElement('button');
+      ren.className = 'btn-small'; ren.textContent = '✎'; ren.title = 'Rename';
+      ren.onclick = () => {
+        const n = prompt('Site name:', s.name);
+        if (n) { s.name = n.slice(0, 40); saveSites(); applySitesLayer(); renderList(); }
+      };
+      const del = document.createElement('button');
+      del.className = 'btn-small'; del.style.color = 'var(--fg-mute)';
+      del.textContent = '×'; del.title = 'Delete';
+      del.onclick = () => {
+        sites.splice(i, 1); saveSites(); applySitesLayer(); renderList();
+      };
+      ctl.append(ren, del);
+      row.append(lbl, ctl);
+      box.appendChild(row);
+    });
+  };
+  window._renderSiteList = renderList;
+  $('siteAddLaunch').onclick = () => startSiteDraw('launch', 'point');
+  $('siteAddLz').onclick = () => startSiteDraw('lz', 'poly');
+  $('siteDrawDone').onclick = () => finishSiteDraw(true);
+  $('siteDrawCancel').onclick = () => finishSiteDraw(false);
+  $('siteExport').onclick = () => {
+    if (!sites.length) { showStatus('No sites to export', true); return; }
+    downloadBlob(new Blob([JSON.stringify(sitesGeoJSON(), null, 1)],
+      { type: 'application/geo+json' }), 'sites.geojson');
+  };
+  $('siteImport').onclick = () => $('siteFileInput').click();
+  $('siteFileInput').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      importSitesGeoJSON(JSON.parse(await f.text()));
+    } catch (_) { showStatus('Not a valid GeoJSON file: ' + f.name, true); }
+  });
+  renderList();
+  syncDrawUi();
+}
+
+// Merge GeoJSON features (Point / Polygon with a type property) into the
+// site list, skipping exact name+type duplicates. Used by file import and
+// by .fvmap packs that carry a sites snapshot.
+function importSitesGeoJSON(gj) {
+  let added = 0;
+  for (const f of (gj && gj.features) || []) {
+    const g = f.geometry || {};
+    const type = (f.properties && f.properties.type) === 'launch' ? 'launch' : 'lz';
+    const name = ((f.properties && f.properties.name) || type).slice(0, 40);
+    let geom = null;
+    if (g.type === 'Point') geom = { kind: 'point', lon: g.coordinates[0], lat: g.coordinates[1] };
+    else if (g.type === 'Polygon' && g.coordinates[0] && g.coordinates[0].length >= 4) {
+      geom = { kind: 'poly', coords: g.coordinates[0].slice(0, -1) };
+    }
+    if (!geom) continue;
+    if (sites.some(s => s.name === name && s.type === type)) continue;
+    sites.push({ type, name, geom });
+    added++;
+  }
+  if (added) {
+    saveSites(); applySitesLayer();
+    if (window._renderSiteList) window._renderSiteList();
+  }
+  showStatus(`Imported ${added} site${added === 1 ? '' : 's'}`);
+  return added;
+}
+
 // ============================================================================
 //  MapLibre + deck.gl -- created lazily after first flight load
 // ============================================================================
@@ -3301,6 +3460,8 @@ let pendingApply = null;
 function buildMapStyle() {
   return {
     version: 8,
+    // Glyphs are only needed by the sites' name labels (symbol layer).
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     sources: {
       'sat': { type: 'raster', tiles: ['https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
                tileSize: 256, maxzoom: 19, attribution: 'Tiles \u00a9 Esri' },
@@ -3420,6 +3581,104 @@ function applyOpenAipLayer() {
   renderDirty = true;
 }
 
+// ---------------------------------------------------------------------------
+// Launch sites & landing zones -- named markers (launch, orange) and
+// polygons (LZ, green) drawn on the map for briefing other pilots.
+// Persisted in localStorage, exchanged as GeoJSON, and snapshotted into
+// .fvmap packs so a shared pack carries the annotations too.
+// ---------------------------------------------------------------------------
+let sites = [];       // [{type:'launch'|'lz', name, geom:{kind:'point',lon,lat} | {kind:'poly',coords:[[lon,lat],..]}}]
+let siteDraw = null;  // {type, kind, coords:[[lon,lat],..]} while drawing
+function loadSites() {
+  try { sites = JSON.parse(localStorage.getItem('fv_sites') || '[]'); }
+  catch (_) { sites = []; }
+  if (!Array.isArray(sites)) sites = [];
+}
+function saveSites() {
+  try { localStorage.setItem('fv_sites', JSON.stringify(sites)); } catch (_) {}
+}
+function sitesGeoJSON() {
+  const feats = [];
+  for (const s of sites) {
+    const properties = { type: s.type, name: s.name };
+    feats.push(s.geom.kind === 'point'
+      ? { type: 'Feature', properties,
+          geometry: { type: 'Point', coordinates: [s.geom.lon, s.geom.lat] } }
+      : { type: 'Feature', properties,
+          geometry: { type: 'Polygon',
+                      coordinates: [[...s.geom.coords, s.geom.coords[0]]] } });
+  }
+  if (siteDraw && siteDraw.coords.length) {   // in-progress preview
+    feats.push({ type: 'Feature', properties: { type: siteDraw.type, name: '' },
+      geometry: siteDraw.coords.length === 1
+        ? { type: 'Point', coordinates: siteDraw.coords[0] }
+        : { type: 'LineString', coordinates: siteDraw.coords } });
+  }
+  return { type: 'FeatureCollection', features: feats };
+}
+const SITE_COLOR = ['case', ['==', ['get', 'type'], 'launch'],
+                    '#fb923c', '#4ade80'];   // launch orange, LZ green
+function applySitesLayer() {
+  if (!map || !mapReady) return;
+  try {
+    const src = map.getSource('sites');
+    if (!src) {
+      map.addSource('sites', { type: 'geojson', data: sitesGeoJSON() });
+      map.addLayer({ id: 'sites-fill', type: 'fill', source: 'sites',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': SITE_COLOR, 'fill-opacity': 0.22 } });
+      map.addLayer({ id: 'sites-line', type: 'line', source: 'sites',
+        filter: ['any', ['==', ['geometry-type'], 'Polygon'],
+                        ['==', ['geometry-type'], 'LineString']],
+        paint: { 'line-color': SITE_COLOR, 'line-width': 2 } });
+      map.addLayer({ id: 'sites-pt', type: 'circle', source: 'sites',
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: { 'circle-radius': 7, 'circle-color': SITE_COLOR,
+                 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
+      map.addLayer({ id: 'sites-label', type: 'symbol', source: 'sites',
+        layout: { 'text-field': ['get', 'name'],
+                  'text-font': ['Open Sans Semibold'], 'text-size': 12,
+                  'text-offset': [0, 1.1], 'text-anchor': 'top' },
+        paint: { 'text-color': '#fff',
+                 'text-halo-color': 'rgba(0,0,0,0.75)', 'text-halo-width': 1.2 } });
+    } else {
+      src.setData(sitesGeoJSON());
+    }
+  } catch (e) { console.warn('sites layer failed:', e); }
+  renderDirty = true;
+}
+function startSiteDraw(type, kind) {
+  siteDraw = { type, kind, coords: [] };
+  if (map) map.getCanvas().style.cursor = 'crosshair';
+  if (window._syncSiteDrawUi) window._syncSiteDrawUi();
+}
+function finishSiteDraw(commit) {
+  if (commit && siteDraw) {
+    const c = siteDraw.coords;
+    let geom = null;
+    if (siteDraw.kind === 'point' && c.length >= 1) {
+      geom = { kind: 'point', lon: c[0][0], lat: c[0][1] };
+    } else if (siteDraw.kind === 'poly' && c.length >= 3) {
+      geom = { kind: 'poly', coords: c };
+    }
+    if (geom) {
+      const dflt = siteDraw.type === 'launch' ? 'Launch' : 'LZ';
+      const name = (prompt(`${dflt} name:`, '') || dflt).slice(0, 40);
+      sites.push({ type: siteDraw.type, name, geom });
+      saveSites();
+    }
+  }
+  siteDraw = null;
+  if (map) map.getCanvas().style.cursor = '';
+  applySitesLayer();
+  if (window._renderSiteList) window._renderSiteList();
+  if (window._syncSiteDrawUi) window._syncSiteDrawUi();
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && siteDraw) finishSiteDraw(false);
+});
+loadSites();
+
 function initMap() {
   if (map) return;
   document.getElementById('app').style.display = '';
@@ -3480,6 +3739,7 @@ function initMap() {
     mapReady = true;
     applyKk7Layers();
     applyOpenAipLayer();
+    applySitesLayer();
     configureMapZoom();
     if (window._wireMapGestures) window._wireMapGestures();
     if (pendingApply) { pendingApply(); pendingApply = null; }
@@ -3489,6 +3749,23 @@ function initMap() {
   // (Ground-altitude sampling no longer depends on map state; it fetches
   // Terrarium DEM tiles directly at a fixed high zoom in
   // sampleGroundAlt().)
+
+  // Site drawing: while a draw is active, plain clicks add vertices
+  // (a point site commits on the first click); double-click closes a
+  // polygon. Outside draw mode these handlers do nothing.
+  map.on('click', e => {
+    if (!siteDraw) return;
+    siteDraw.coords.push([e.lngLat.lng, e.lngLat.lat]);
+    if (siteDraw.kind === 'point') finishSiteDraw(true);
+    else applySitesLayer();               // live preview
+  });
+  map.on('dblclick', e => {
+    if (!siteDraw) return;
+    e.preventDefault();
+    siteDraw.coords.pop();                // dblclick fired 2 extra clicks
+    siteDraw.coords.pop();
+    finishSiteDraw(true);
+  });
 
   map.on('error', e => {
     // Aborted tile requests are not errors: setTiles() (kk7 / openAIP
@@ -7126,6 +7403,7 @@ function setupAppUi() {
   wireAirspaceUi();
   wireExportUi();
   wireOfflineUi();
+  wireSitesUi();
 }
 
 // ============================================================================
