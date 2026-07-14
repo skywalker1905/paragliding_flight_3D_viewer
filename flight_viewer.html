@@ -8266,6 +8266,21 @@ async function addCmpFiles(fileList) {
       text,               // kept so this track can be promoted to primary
       segData: null, path: null,
     });
+    // Far-apart tracks are legal -- the primary-pilot selector jumps the
+    // camera between them -- but easy to mistake for a broken load, since
+    // every camera mode follows the primary pilot only and the other
+    // pilot may simply never be on screen. Warn, don't block.
+    if (N > 0) {
+      const a = fixes[0], b = fx[0];
+      const kmPerLon = 111.32 * Math.cos(a.lat * Math.PI / 180);
+      const km = Math.hypot((b.lon - a.lon) * kmPerLon,
+                            (b.lat - a.lat) * 111.32);
+      if (km > 30) {
+        showStatus(`${file.name} starts ${Math.round(km)} km away from the `
+          + 'main flight — the camera follows the primary pilot only, so it '
+          + 'may never be on screen. Use the pilot selector to switch.', true);
+      }
+    }
   }
   cmpRev++;
   renderCmpList();
