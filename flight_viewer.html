@@ -597,6 +597,15 @@
     border-radius: 2px; pointer-events: none; display: none; z-index: 2;
   }
 
+  /* Site-drawing mode: a precision crosshair everywhere over the map.
+     !important because MapLibre's canvas-container grab/grabbing cursors
+     and the custom drag handlers would otherwise win mid-gesture -- with
+     terrain the picked spot is easy to misjudge without a fixed reticle. */
+  body.siteDrawing #map, body.siteDrawing #map canvas,
+  body.siteDrawing .maplibregl-canvas-container {
+    cursor: crosshair !important;
+  }
+
   /* Director timeline-shot bands on the progress bar */
   #shotBands { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
   #shotBands .shotBand {
@@ -3649,7 +3658,7 @@ function applySitesLayer() {
 }
 function startSiteDraw(type, kind) {
   siteDraw = { type, kind, coords: [] };
-  if (map) map.getCanvas().style.cursor = 'crosshair';
+  document.body.classList.add('siteDrawing');
   if (window._syncSiteDrawUi) window._syncSiteDrawUi();
 }
 function finishSiteDraw(commit) {
@@ -3669,7 +3678,7 @@ function finishSiteDraw(commit) {
     }
   }
   siteDraw = null;
-  if (map) map.getCanvas().style.cursor = '';
+  document.body.classList.remove('siteDrawing');
   applySitesLayer();
   if (window._renderSiteList) window._renderSiteList();
   if (window._syncSiteDrawUi) window._syncSiteDrawUi();
@@ -7642,6 +7651,13 @@ let _dirCandidateMs = 0;        // flight time when the candidate appeared
 let _dirLastMs = -1;            // to detect seeks / scrubs
 let _dirFitCam = null;          // {center, zoom} framing the whole track,
                                 //   computed on entering the finale
+// Manual-zoom respect: the zoom as WE last left it (frame end), a user
+// override captured when the next frame starts at a different zoom, and
+// the phase/shot segment the override belongs to -- it clears when a new
+// segment (next thermal, glide, shot, finale...) begins.
+let _dirSetZoom = null;
+let _dirZoomOverride = null;
+let _dirLastSeg = null;
 function directorPhaseFor(ms) {
   if ((T1 - ms) / 1000 < state.dirFinaleSec) return 'finale';
   if ((ms - T0) / 1000 < state.dirIntroSec) return 'intro';
@@ -7693,10 +7709,17 @@ function directorCamFrame(headingDeg, dtMs) {
   const ms = state.currentMs;
   const want = directorPhaseFor(ms);
   const prevPhase = _dirPhase;
+  // A manual pinch / wheel while we weren't looking moved the zoom away
+  // from where the last frame left it: keep tracking at the user's
+  // framing instead of pulling back to the phase default.
+  if (_dirSetZoom != null && Math.abs(map.getZoom() - _dirSetZoom) > 0.05) {
+    _dirZoomOverride = map.getZoom();
+  }
   // A seek (backwards, or a jump of over a minute) resets the phase state
   // so the camera adopts the new context immediately.
   if (_dirLastMs < 0 || ms < _dirLastMs || ms - _dirLastMs > 60000) {
     _dirPhase = want; _dirCandidate = null;
+    _dirZoomOverride = null; _dirSetZoom = null;
   } else if (want !== _dirPhase) {
     if (want === 'intro' || want === 'finale') {
       _dirPhase = want; _dirCandidate = null;   // hard time boundaries
@@ -7715,6 +7738,10 @@ function directorCamFrame(headingDeg, dtMs) {
 
   suppressMoveDirty = true;
   const shot = dirShotAt(ms);
+  // New segment (a different shot, or a phase flip -- next thermal, the
+  // glide after it, the finale...) releases the manual-zoom override.
+  const seg = shot || _dirPhase;
+  if (seg !== _dirLastSeg) { _dirLastSeg = seg; _dirZoomOverride = null; }
   let zoomTarget, pitchTarget;
   if (shot) {
     // User-pinned shot overrides the automatic phase for this range.
@@ -7754,11 +7781,14 @@ function directorCamFrame(headingDeg, dtMs) {
       ]);
     }
   }
-  // Distance: ease toward the framing zoom of the shot / phase.
+  // Distance: ease toward the framing zoom of the shot / phase, unless
+  // the user pinned their own zoom for this segment.
+  if (_dirZoomOverride != null) zoomTarget = _dirZoomOverride;
   const z = map.getZoom();
   if (zoomTarget != null && Math.abs(zoomTarget - z) > 0.02) {
     map.setZoom(z + (zoomTarget - z) * Math.min(1, dtMs / 2500));
   }
+  _dirSetZoom = map.getZoom();   // frame-end zoom: the next frame compares
   const p = map.getPitch();
   if (Math.abs(pitchTarget - p) > 0.1) {
     map.setPitch(p + (pitchTarget - p) * Math.min(1, dtMs / 1200));
@@ -7896,6 +7926,7 @@ function loadFlight(newFixes, filename, opts) {
   loopAMs = 0; loopBMs = 0;   // A-B loop belongs to the previous flight
   _dirPhase = 'glide'; _dirCandidate = null;   // Director state belongs to
   _dirLastMs = -1; _dirFitCam = null;          //   the previous flight too
+  _dirZoomOverride = null; _dirSetZoom = null; _dirLastSeg = null;
   dirShots = [];                               // shots too (like the A-B loop)
   if (window._refreshShotUi) window._refreshShotUi();
   updateLoopBand();
