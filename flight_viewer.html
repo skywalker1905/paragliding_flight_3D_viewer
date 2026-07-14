@@ -1401,9 +1401,15 @@
           <span class="lbl" style="font-size:11px;color:var(--fg-mute)">Status</span>
           <span id="offlineStatus" style="font-size:11px;color:var(--fg-dim)">No offline map loaded</span>
         </div>
+        <div class="row">
+          <span class="lbl" title="The active offline map is remembered in this browser and restored automatically on the next visit. This removes the stored copy (the downloaded .fvmap file is unaffected).">Stored copy</span>
+          <div class="ctl"><button id="offlineForgetBtn" class="btn-small" style="color:var(--fg-mute)">Forget</button></div>
+        </div>
         <div style="font-size:11px;color:var(--fg-mute);line-height:1.5">
-          Tip: open the <code>.fvmap</code> file (Open button or drag&nbsp;&amp;&nbsp;drop)
-          <em>before or after</em> the flight file. Best loaded first when fully offline.
+          Packs are named after the area + build time (e.g.
+          <code>Bassano_20260713-1425.fvmap</code>). The active map is also
+          kept in this browser and restored automatically next time — the
+          file is only needed on other devices or after "Forget".
         </div>
         </div>
 
@@ -2951,6 +2957,117 @@ let offlineTiles = null;      // Map "sat|osm|dem/z/x/y" -> data: URL
 let offlineMapName = '';
 const OFFLINE_MAX_TILES = 2400;
 
+// ---- Offline-map persistence (IndexedDB) ----
+// A loaded / freshly built pack is remembered locally and restored on the
+// next visit, so going offline doesn't depend on re-opening the .fvmap
+// file. (localStorage can't hold tens of MB; IndexedDB can.)
+const IDB_NAME = 'fv_offline', IDB_STORE = 'maps';
+function ofdbOpenRaw(version) {
+  return new Promise((res, rej) => {
+    const r = version ? indexedDB.open(IDB_NAME, version)
+                      : indexedDB.open(IDB_NAME);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('IndexedDB open blocked'));
+  });
+}
+// Self-healing open: if a previous versionchange was interrupted (page
+// reload mid-upgrade), the database can exist WITHOUT the store, and a
+// same-version open would never run the upgrade again. Detect that and
+// force one more upgrade pass.
+async function ofdbOpen() {
+  let db = await ofdbOpenRaw();
+  if (!db.objectStoreNames.contains(IDB_STORE)) {
+    const v = db.version + 1;
+    db.close();
+    db = await ofdbOpenRaw(v);
+  }
+  return db;
+}
+async function ofdbPut(key, val) {
+  const db = await ofdbOpen();
+  try {
+    return await new Promise((res, rej) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(val, key);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  } finally { db.close(); }   // also on a synchronous transaction() throw
+}
+async function ofdbGet(key) {
+  const db = await ofdbOpen();
+  try {
+    return await new Promise((res, rej) => {
+      const rq = db.transaction(IDB_STORE, 'readonly')
+        .objectStore(IDB_STORE).get(key);
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => rej(rq.error);
+    });
+  } finally { db.close(); }
+}
+async function ofdbDel(key) {
+  const db = await ofdbOpen();
+  try {
+    return await new Promise((res, rej) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  } finally { db.close(); }
+}
+async function rememberOfflineMap(name, tilesObj) {
+  try {
+    await ofdbPut('current', { name, tiles: tilesObj, saved: Date.now() });
+  } catch (e) { console.warn('offline map not persisted:', e); }
+}
+async function restoreOfflineMap() {
+  try {
+    const rec = await ofdbGet('current');
+    if (!rec || !rec.tiles) return;
+    offlineTiles = new Map(Object.entries(rec.tiles));
+    offlineMapName = rec.name || 'saved map';
+    updateOfflineStatusUi();
+    reloadMapStyle();
+  } catch (e) { console.warn('offline map restore failed:', e); }
+}
+async function forgetOfflineMap() {
+  try { await ofdbDel('current'); } catch (_) {}
+  offlineTiles = null; offlineMapName = '';
+  updateOfflineStatusUi();
+  reloadMapStyle();
+  showStatus('Offline map removed from this browser');
+}
+
+// Human-readable region for pack names: reverse-geocode the reference
+// point (takeoff, or the viewport centre in explore mode) via Nominatim;
+// fall back to plain coordinates when offline or rate-limited.
+async function regionNameFor(lat, lon) {
+  try {
+    const r = await fetch('https://nominatim.openstreetmap.org/reverse'
+      + `?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`
+      + '&format=jsonv2&zoom=10&accept-language=en');
+    if (r.ok) {
+      const a = (await r.json()).address || {};
+      const nm = a.village || a.town || a.city || a.municipality
+        || a.county || a.state;
+      if (nm) {
+        return nm.replace(/[^\wÀ-ɏ一-鿿-]+/g, '_')
+                 .replace(/^_+|_+$/g, '').slice(0, 40);
+      }
+    }
+  } catch (_) { /* offline / blocked -- coordinates below */ }
+  return `${Math.abs(lat).toFixed(2)}${lat >= 0 ? 'N' : 'S'}`
+       + `_${Math.abs(lon).toFixed(2)}${lon >= 0 ? 'E' : 'W'}`;
+}
+
 function offlineKeyForUrl(url) {
   let m = url.match(/World_Imagery\/MapServer\/tile\/(\d+)\/(\d+)\/(\d+)/);
   if (m) return `sat/${m[1]}/${m[3]}/${m[2]}`;      // Esri path is z/y/x
@@ -3093,7 +3210,18 @@ async function buildOfflineMap() {
   };
   await Promise.all(Array.from({ length: 8 }, worker));
 
-  const packName = N > 0 ? exportBaseName() : 'map_area';
+  // Name the pack after the place it covers plus when it was built --
+  // "Bassano_del_Grappa_20260713-1425.fvmap" beats "flight.fvmap" when a
+  // folder holds packs from several sites. Reference point: the takeoff
+  // when a flight is loaded, otherwise the packed area's centre.
+  const refLat = N > 0 ? fixes[takeoffIdx || 0].lat : (south + north) / 2;
+  const refLon = N > 0 ? fixes[takeoffIdx || 0].lon : (west + east) / 2;
+  const region = await regionNameFor(refLat, refLon);
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  const packName = `${region}_${stamp}`;
   const out = {
     fvmap: 1,
     name: packName,
@@ -3107,10 +3235,12 @@ async function buildOfflineMap() {
   showStatus(`Offline map saved: ${Object.keys(tiles).length} tiles, `
     + `${(blob.size / 1048576).toFixed(1)} MB`
     + (failed ? ` (${failed} tiles failed)` : ''));
-  // Also activate it right away in this session.
+  // Also activate it right away in this session and remember it locally
+  // for the next one.
   offlineTiles = new Map(Object.entries(tiles));
   offlineMapName = out.name;
   updateOfflineStatusUi();
+  rememberOfflineMap(out.name, tiles);
 }
 
 function loadOfflineMapText(text, filename) {
@@ -3123,6 +3253,7 @@ function loadOfflineMapText(text, filename) {
   offlineTiles = new Map(Object.entries(obj.tiles));
   offlineMapName = obj.name || filename.replace(/\.[^.]+$/, '');
   updateOfflineStatusUi();
+  rememberOfflineMap(offlineMapName, obj.tiles);   // auto-restores next visit
   const msg = `Offline map loaded: ${offlineTiles.size} tiles (${offlineMapName})`;
   const landingEl = document.getElementById('landing');
   if (landingEl && !landingEl.classList.contains('hidden')) {
@@ -3151,6 +3282,8 @@ function updateOfflineStatusUi() {
 function wireOfflineUi() {
   const btn = document.getElementById('offlineDlBtn');
   if (btn) btn.onclick = () => { buildOfflineMap(); };
+  const forget = document.getElementById('offlineForgetBtn');
+  if (forget) forget.onclick = () => { forgetOfflineMap(); };
   updateOfflineStatusUi();
 }
 
@@ -7725,6 +7858,9 @@ async function renderRecentList() {
   wrap.style.display = '';
 }
 renderRecentList();
+// Bring back the last remembered offline map before anything loads, so a
+// fully offline start (field, no signal) works without re-opening a file.
+restoreOfflineMap();
 
 // Landing-screen demo flight: fetches the bundled demo.igc (works when the
 // page is served over HTTP(S) -- e.g. GitHub Pages; hidden on file://).
