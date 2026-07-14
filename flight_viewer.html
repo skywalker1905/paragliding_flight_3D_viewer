@@ -7670,10 +7670,20 @@ function directorCourseAt(ms, windowMs) {
 // motion over the ground always reads; only the finale pulls back to the
 // full-track wide shot. All values live in state (Director-camera
 // settings section) with these behaviours as the factory defaults.
+// Viewport pull-back: the configured zooms were tuned on a desktop-sized
+// map, where they show a comfortable stretch of track. A phone shows the
+// same zoom over a much smaller area -- just the pilot's immediate
+// surroundings -- so narrow screens ease OUT by up to ~1.5 levels to keep
+// a similar amount of track in frame. Never zooms IN past the set value.
+function dirZoomAdjust() {
+  const m = Math.min(window.innerWidth || 1000, window.innerHeight || 1000);
+  return Math.max(-1.6, Math.min(0, Math.log2(m / 1000)));
+}
 function dirZoomFor(phase) {
-  return phase === 'intro' ? state.dirZoomIntro
-       : phase === 'thermal' ? state.dirZoomThermal
-       : phase === 'glide' ? state.dirZoomGlide : null;   // finale: auto fit
+  const z = phase === 'intro' ? state.dirZoomIntro
+          : phase === 'thermal' ? state.dirZoomThermal
+          : phase === 'glide' ? state.dirZoomGlide : null;   // finale: auto fit
+  return z == null ? null : z + dirZoomAdjust();
 }
 function dirPitchFor(phase) {
   return phase === 'intro' ? state.dirPitchIntro
@@ -7780,7 +7790,7 @@ function directorCamFrame(headingDeg, dtMs) {
   let zoomTarget, pitchTarget;
   if (shot) {
     // User-pinned shot overrides the automatic phase for this range.
-    zoomTarget = shot.zoom; pitchTarget = shot.pitch;
+    zoomTarget = shot.zoom + dirZoomAdjust(); pitchTarget = shot.pitch;
     if (shot.mode === 'orbit') {
       map.setBearing(map.getBearing()
         + Math.max(3, state.orbitSpeedDeg) * dtMs / 1000);
