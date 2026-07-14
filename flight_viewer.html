@@ -2744,7 +2744,8 @@ const state = new Proxy(rawState, {
 // loaded the default stays left-drag-rotates. All drag dispatch reads
 // the effective value through here.
 let exploreDragPan = false;
-function effSwapButtons() { return exploreDragPan || state.swapButtons; }
+let siteDrawPan = false;   // forced left-drag-pan while drawing a site
+function effSwapButtons() { return exploreDragPan || siteDrawPan || state.swapButtons; }
 
 const U = {
   altLabel:  () => state.units === 'metric' ? 'm' : 'ft',
@@ -3656,9 +3657,20 @@ function applySitesLayer() {
   } catch (e) { console.warn('sites layer failed:', e); }
   renderDirty = true;
 }
+// Camera state saved on entering draw mode, restored on leaving. Drawing
+// forces a top-down, non-following, drag-to-pan view so the crosshair
+// lands exactly where intended; on tilted 3-D terrain a click otherwise
+// picks a point offset from the visible spot under the cursor.
+let _siteDrawCam = null;
 function startSiteDraw(type, kind) {
   siteDraw = { type, kind, coords: [] };
   document.body.classList.add('siteDrawing');
+  if (map && mapReady) {
+    _siteDrawCam = { pitch: map.getPitch(), follow: state.follow };
+    if (state.follow && window._setFollowPilot) window._setFollowPilot(false);
+    if (window._setSiteDrawPan) window._setSiteDrawPan(true);
+    map.easeTo({ pitch: 0, duration: 400 });    // top-down for exact picking
+  }
   if (window._syncSiteDrawUi) window._syncSiteDrawUi();
 }
 function finishSiteDraw(commit) {
@@ -3679,6 +3691,14 @@ function finishSiteDraw(commit) {
   }
   siteDraw = null;
   document.body.classList.remove('siteDrawing');
+  // Restore the pre-draw camera: drag-to-rotate back, original tilt, and
+  // follow state (a following camera snaps back onto the pilot).
+  if (window._setSiteDrawPan) window._setSiteDrawPan(false);
+  if (_siteDrawCam && map) {
+    map.easeTo({ pitch: _siteDrawCam.pitch, duration: 400 });
+    if (_siteDrawCam.follow && window._setFollowPilot) window._setFollowPilot(true);
+  }
+  _siteDrawCam = null;
   applySitesLayer();
   if (window._renderSiteList) window._renderSiteList();
   if (window._syncSiteDrawUi) window._syncSiteDrawUi();
@@ -6050,6 +6070,14 @@ function setupAppUi() {
   window._setExploreDragPan = function (on) {
     exploreDragPan = !!on;
     syncSwapUi();
+    if (effSwapButtons() && !state.follow) dragState = null;
+    refreshMapDragHandlers();
+  };
+  // Same, for site-drawing mode: left-drag pans so aiming the crosshair
+  // while panning never spins the camera. Doesn't touch the swap UI --
+  // it's a transient tool mode, restored when drawing ends.
+  window._setSiteDrawPan = function (on) {
+    siteDrawPan = !!on;
     if (effSwapButtons() && !state.follow) dragState = null;
     refreshMapDragHandlers();
   };
