@@ -3657,19 +3657,23 @@ function applySitesLayer() {
   } catch (e) { console.warn('sites layer failed:', e); }
   renderDirty = true;
 }
-// Camera state saved on entering draw mode, restored on leaving. Drawing
-// forces a top-down, non-following, drag-to-pan view so the crosshair
-// lands exactly where intended; on tilted 3-D terrain a click otherwise
-// picks a point offset from the visible spot under the cursor.
+// Camera + playback state saved on entering draw mode, restored on
+// leaving. Drawing pauses playback and forces a top-down, non-following,
+// drag-to-pan view so the crosshair lands exactly where intended; on
+// tilted 3-D terrain a click otherwise picks a point offset from the
+// visible spot under the cursor.
 let _siteDrawCam = null;
 function startSiteDraw(type, kind) {
   siteDraw = { type, kind, coords: [] };
   document.body.classList.add('siteDrawing');
   if (map && mapReady) {
-    _siteDrawCam = { pitch: map.getPitch(), follow: state.follow };
+    _siteDrawCam = { pitch: map.getPitch(), bearing: map.getBearing(),
+                     zoom: map.getZoom(), follow: state.follow,
+                     playing: state.playing };
+    if (state.playing) setPlaying(false);        // hold the flight still
     if (state.follow && window._setFollowPilot) window._setFollowPilot(false);
     if (window._setSiteDrawPan) window._setSiteDrawPan(true);
-    map.easeTo({ pitch: 0, duration: 400 });    // top-down for exact picking
+    map.easeTo({ pitch: 0, duration: 400 });     // top-down for exact picking
   }
   if (window._syncSiteDrawUi) window._syncSiteDrawUi();
 }
@@ -3691,12 +3695,15 @@ function finishSiteDraw(commit) {
   }
   siteDraw = null;
   document.body.classList.remove('siteDrawing');
-  // Restore the pre-draw camera: drag-to-rotate back, original tilt, and
-  // follow state (a following camera snaps back onto the pilot).
+  // Restore the pre-draw view (tilt, bearing, zoom), drag-to-rotate,
+  // follow state (a following camera snaps back onto the pilot) and
+  // playback -- resuming exactly where the flight was paused.
   if (window._setSiteDrawPan) window._setSiteDrawPan(false);
   if (_siteDrawCam && map) {
-    map.easeTo({ pitch: _siteDrawCam.pitch, duration: 400 });
+    map.easeTo({ pitch: _siteDrawCam.pitch, bearing: _siteDrawCam.bearing,
+                 zoom: _siteDrawCam.zoom, duration: 400 });
     if (_siteDrawCam.follow && window._setFollowPilot) window._setFollowPilot(true);
+    if (_siteDrawCam.playing) setPlaying(true);
   }
   _siteDrawCam = null;
   applySitesLayer();
