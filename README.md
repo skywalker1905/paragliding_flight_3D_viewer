@@ -5,14 +5,19 @@ tracks. Open `flight_viewer.html` in any modern browser, drop in an `.igc`,
 `.gpx`, or `.kml` file, and fly the track over real 3-D terrain with
 vario-coloured trail, altitude / vario / speed charts, flight statistics
 with XC scoring, thermal detection and wind estimation, live HUD
-(including AGL and glide ratio), multi-track comparison replay, OpenAir
-airspace overlay, and full playback control. Settings and recent flights
-persist locally. No build step, no server, no account.
+(including AGL and glide ratio), and full playback control. A cinematic
+**Director camera** auto-frames the whole flight; a **thermal.kk7.ch
+thermal & skyways heatmap** overlays the terrain; multiple tracks replay
+side-by-side; you can draw and share **launch / landing sites**, load
+**OpenAir / openAIP airspace**, and download **offline map packs** for
+flying in the field. Settings, sites and the active offline map persist
+locally. No build step, no server, no account.
 
 **Try it online:**
 <https://skywalker1905.github.io/paragliding_flight_3D_viewer/> — hit
-**Try a demo flight**, or drop in your own file. Nothing is uploaded;
-all processing stays in your browser.
+**Try a demo flight**, drop in your own file, or click **Explore thermal
+map** to browse the thermal / skyways heatmaps with no flight loaded.
+Nothing is uploaded; all processing stays in your browser.
 
 ## Screenshots
 
@@ -53,6 +58,10 @@ around:
 | World Imagery (satellite basemap) | `services.arcgisonline.com` (Esri) | Visible map tiles |
 | OpenStreetMap (street basemap) | `tile.openstreetmap.org` | Alternative map tiles |
 | Terrarium DEM (3-D terrain + chart's ground line) | `s3.amazonaws.com/elevation-tiles-prod/terrarium/` (Mapzen / AWS Open Data, CC0) | Elevation, sampled directly at zoom 14 (~10 m / pixel) for ridge-accurate ground-altitude readouts |
+| Thermal & skyways heatmaps | `thermal.kk7.ch` (CC-BY-NC-SA) | Optional thermal-probability / flight-density overlay |
+| openAIP airspace tiles | `api.tiles.openaip.net` | Optional worldwide airspace overlay (needs a free API key) |
+| Label glyphs | `demotiles.maplibre.org` | Fonts for the launch / landing site labels |
+| Reverse geocoding | `nominatim.openstreetmap.org` | Names offline-map packs after their region (falls back to coordinates) |
 
 If you open the viewer with no internet access, the map area will be blank
 and the chart's ground trace will be empty. The track itself, the
@@ -74,10 +83,10 @@ cached them or have been opened online at least once.
   drawer.
 - Real 3-D terrain from the Mapzen / AWS **Terrarium** DEM, with
   adjustable exaggeration (1× – 3×, default 1×).
-- Standard pan / rotate / pitch / zoom. **Swap L/R mouse** (on by
-  default): left-drag rotates the 3-D view, right-drag pans — better
-  for touchpads. Turn off to restore MapLibre's left-pan / right-rotate
-  layout. Middle-wheel zoom is unchanged.
+- Standard pan / rotate / pitch / zoom. By default **left-drag rotates**
+  the 3-D view and right-drag pans — better for touchpads. The **Swap L/R
+  mouse** setting flips this to left-pan / right-rotate. Middle-wheel zoom
+  is unchanged.
 - Slower default scroll / trackpad zoom rates; map **+ / −** controls
   use instant zoom steps so they still work while **Follow pilot** is on
   (animated zoom would be cancelled by per-frame recentering).
@@ -99,14 +108,17 @@ cached them or have been opened online at least once.
 - The trail **ends exactly under the pilot marker** — the boundary
   fix-to-fix segment is re-sampled along the spline each frame so there
   is no overshoot, even on low-rate IGCs.
-- **Track curtain** (settings): translucent vario-tinted wall from the
-  track down to the terrain — a strong 3-D depth cue, SeeYou-style.
+- **Track curtain** (settings, on by default): translucent pale wall from
+  the track down to the terrain — a strong 3-D depth cue, SeeYou-style.
 - **Track-ahead toggle** in the bottom bar: hides the unflown portion
   by default; click to show the full track at full opacity.
-- **Track fade** slider (settings): seconds of fully-bright trail
-  behind the pilot before fading to transparent. `0` = off (whole past
-  stays bright). Step auto-scales to ~10 % of the current value; max
-  stretches to the full flight duration.
+- **Independent track & curtain fade** (settings → Trail & pilot): the
+  vario line and the curtain each have their own on/off switch plus a
+  **hold** time (seconds the flown stretch stays fully bright behind the
+  pilot) and a **fade** time (seconds it then takes to fade to
+  transparent). The four sliders stay live and persist even while a
+  group's fade is off. Defaults: track fade **off**; curtain fade **on**
+  (1:00 hold, 1:00 fade).
 
 ### Spiral reconstruction
 - **Model overlay** for thermal spirals. At 1 Hz sampling, a paraglider
@@ -154,11 +166,44 @@ cached them or have been opened online at least once.
   playback from the first fix.
 - **Center on pilot** (`C` / ⊕) toggles follow mode (not a one-shot
   recenter).
-- **Camera style** (settings): **Center** keeps the pilot centred with
-  the heading under your control; **Chase** eases the camera bearing
+- **Camera style** (settings): **Director** (default) auto-frames the
+  flight cinematically — see below; **Center** keeps the pilot centred
+  with the heading under your control; **Chase** eases the camera bearing
   toward the direction of flight for a follow-cam feel; **Orbit**
   slowly circles the pilot while following (adjustable speed) to show
   the 3-D track from every side. Dragging always takes over manually.
+
+### Director camera
+- A cinematic auto-framing mode (the default camera style) driven by the
+  flight's own structure, tuned so both the angle **and the distance**
+  read as deliberate camera work. Four phases:
+  - **Intro** — an opening wide shot right after takeoff, easing in.
+  - **Thermal** — a close orbit around each detected climb.
+  - **Glide** — a mid-shot that pans slowly onto the course over ground
+    between thermals (immune to short heading wiggles; holds its bearing
+    while circling the detector missed).
+  - **Finale** — the last minute of the flight: the camera releases the
+    pilot, drifts to the whole track's centre and pulls back until the
+    entire flight fits, closing on a slow wide pan.
+- Zoom, pitch, bearing and centre all move on gentle eases; phase
+  switches use hysteresis so brief detector gaps don't flip the framing.
+- **Small-screen pull-back**: narrow screens (phones) automatically ease
+  out by up to ~1.5 zoom levels so a comparable stretch of track stays in
+  frame; desktops are barely affected.
+- **Manual zoom is respected**: pinch or wheel to reframe and the camera
+  keeps tracking at your distance until the next phase (a new thermal,
+  the glide after it, a shot, the finale) begins.
+- **Tunable** (settings → **Director camera**, shown while Director is
+  selected): per-phase distance (zoom) and tilt (pitch) sliders for
+  intro / thermal / glide, a finale tilt, and intro / finale lengths —
+  the built-in behaviour is the factory default.
+- **Timeline shots**: pin the camera over a chosen stretch of the flight
+  ("Add shot ← now" creates a 60 s shot at the playhead). Each shot has
+  its own move (**Orbit** / **Follow** the course / **Fixed** bearing),
+  distance and tilt, with start/end nudged to the current time like the
+  A-B loop. Inside a shot the automatic phases are overridden; leaving it
+  falls back seamlessly. Shots show as translucent bands on the timeline
+  and belong to the loaded flight.
 
 ### Chart
 - Three metrics, switchable in the chart header: **Alt** (pilot altitude
@@ -171,7 +216,8 @@ cached them or have been opened online at least once.
 - Y-axis range = **union** of pilot and ground extents, so the ground
   line stays in frame even when terrain rises above the pilot's path.
 - X-axis is rendered in the **launch site's local clock time** with
-  DST applied via `tz-lookup` + `Intl.DateTimeFormat`. Falls back to a
+  DST applied via `tz-lookup` + `Intl.DateTimeFormat`, labelled with the
+  zone's own abbreviation (e.g. **PDT** / **PST**). Falls back to a
   longitude-only UTC offset when `tz-lookup` is unavailable.
 - Click to seek, or **press and drag** (mouse or touch) to scrub
   continuously; the cursor line shows the current playback time.
@@ -205,9 +251,10 @@ cached them or have been opened online at least once.
   playback time (speed, arrow, and the direction the wind blows *from*).
 
 ### HUD
-- Live time (launch-local, DST-aware), altitude, **AGL** (from the DEM
-  directly below the pilot), ground speed, vario, **glide ratio (L/D)**,
-  **wind estimate**, cumulative distance.
+- Live time (launch-local, DST-aware, shown with the zone abbreviation
+  such as PDT / PST), altitude, **AGL** (from the DEM directly below the
+  pilot), ground speed, vario, **glide ratio (L/D)**, **wind estimate**,
+  cumulative distance.
 - Draggable anywhere on screen.
 
 ### Playback
@@ -241,18 +288,53 @@ cached them or have been opened online at least once.
   on the map while paused and type (CJK names supported).
 - **Live gaps in the HUD**: horizontal distance and altitude difference
   to every other pilot at the synced moment.
-- Tracks **auto-fade** (5 min trail) in multi-pilot mode so the screen
-  stays readable; the Track-fade slider overrides.
+- Comparison tracks share the main flight's track-fade settings, so the
+  same hold / fade window keeps every trail readable.
 - A **primary pilot** selector (transport bar and settings) swaps any
   track into the main slot — camera, HUD, chart, statistics and
   timeline all follow, and the playback moment is preserved.
+- Loading a track that starts far (> 30 km) from the main flight pops a
+  non-blocking warning: the camera follows the primary pilot only, so a
+  distant track may be off-screen until you switch to it.
+
+### Thermal & skyways map (thermal.kk7.ch)
+- Overlay the [thermal.kk7.ch](https://thermal.kk7.ch) heatmaps on the
+  terrain: **Thermals** (probability of finding a usable climb, ≤ zoom
+  12) and **Skyways** (density of all recorded flights, ≤ zoom 13).
+- Toggle the whole overlay with the **♨** map button or in settings →
+  **Thermal map (kk7)**; each layer has its own switch, plus an
+  **opacity** slider and **season** (all / Jan / Apr / Jul / Oct, ±1.5
+  months) and **time-of-day** (all / +4 h / +7 h / +10 h after sunrise)
+  filters matching the kk7 site. On by default: thermals layer at 30 %.
+- **Explore thermal map** on the landing screen opens the map with the
+  overlay and no flight loaded, jumping to your location when permitted —
+  useful for scouting a site before you fly it.
+
+### Launch & landing sites
+- Draw named sites on the map to brief other pilots: a **launch** is a
+  single point (orange), a **landing zone** is a polygon (green). In
+  settings → **Launch & landing sites**, click a button then click the
+  map — a launch commits on the first click; a polygon adds a vertex per
+  click and closes on double-click or **Done** (Esc cancels).
+- Drawing switches to a top-down, drag-to-pan view with a crosshair and
+  pauses playback so the point lands exactly where intended; the previous
+  view, follow state and playback are restored when you finish.
+- Sites can be renamed, deleted, or clicked to fly to. They persist in
+  the browser, **export / import as GeoJSON** (with a `type` property,
+  so they open in Google Earth / QGIS; import merges by name), and are
+  **snapshotted into `.fvmap` packs** so a shared pack carries the
+  annotations too.
 
 ### Airspace overlay
 - Load an **OpenAir** (`.txt`) airspace file (settings → **Airspace**).
   Zones are draped over the 3-D terrain, colour-coded by class
   (P/R/Q red, D amber, CTR blue, …). Click / tap a zone for its name,
   class and vertical limits. Supports `DP`, `DC`, `DB`, `DA` and
-  `V X=/D=` records.
+  `V X=/D=` records. This vector airspace also powers the violation
+  check (see Flight statistics).
+- **openAIP overlay**: paste a free [openAIP](https://www.openaip.net)
+  API key in settings → Airspace to overlay worldwide airspace map
+  tiles; the key is stored locally and the overlay loads automatically.
 
 ### Export & share
 - **Screenshot**: save the current 3-D view as a JPEG (map + track
@@ -279,25 +361,40 @@ cached them or have been opened online at least once.
 ### Offline maps
 - **Save map file** (settings → Offline map): downloads every basemap +
   terrain-DEM tile covering the loaded flight (zoom 8 up to 16, capped
-  at ~2 400 tiles) and saves them as a single `.fvmap` file.
+  at ~2 400 tiles) and saves them as a single `.fvmap` file. With no
+  flight loaded (Explore mode) the pack covers the current viewport, and
+  any enabled kk7 layers are bundled at the current season / time filter.
+- Packs are **named after their region + build time** (e.g.
+  `Bassano_20260713-1425.fvmap`, reverse-geocoded via Nominatim, with
+  plain coordinates as the offline fallback) and carry any launch / LZ
+  sites inside their area.
 - Load a `.fvmap` through the normal **Open** button or drag-and-drop —
   before or after the flight file — and the same flight replays fully
-  offline: basemap, 3-D terrain, AGL and the chart's ground line all
-  come from the bundle.
+  offline: basemap, 3-D terrain, AGL, the chart's ground line, any
+  bundled kk7 layers and sites all come from the bundle.
+- The active offline map is **remembered in the browser** (IndexedDB) and
+  restored automatically next time, so a fully offline start in the field
+  doesn't depend on re-opening the file. A **Forget** button removes the
+  stored copy (the downloaded `.fvmap` is untouched).
 
 ### Settings drawer
 Collapsible sections (open/closed state remembered):
 - **Basics** — altitude source (GPS / baro), basemap, units, follow
-  pilot, camera style (Center / Chase), start at takeoff, swap L/R
-  mouse, Takeoff / Fit camera shortcuts.
+  pilot, camera style (Director / Center / Chase / Orbit) with orbit
+  speed / resume, start at takeoff, swap L/R mouse, Takeoff / Fit camera
+  shortcuts.
+- **Director camera** (shown while Director is selected) — per-phase
+  distance + tilt, intro / finale lengths, and timeline shots.
 - **Track & display** — terrain exaggeration, Alt offset (slider +
   numeric box + **Auto** DEM alignment), track width, 3-D thickness,
   smoothing subdivisions, rounding, KML sample rate.
 - **Spiral reconstruction** — On/Off, Auto / Manual mode, turns / sec,
   detect threshold, manual range.
-- **Trail & pilot** — track fade, colour mode + max climb / sink, pilot
-  shape / size, altitude line.
-- **Comparison tracks**, **Airspace**, **Offline map**, **Export &
+- **Trail & pilot** — track & curtain fade (switch + hold + fade each),
+  track curtain, colour mode + max climb / sink, pilot shape / size,
+  altitude line, XC triangle.
+- **Comparison tracks**, **Airspace** (+ openAIP key), **Thermal map
+  (kk7)**, **Launch & landing sites**, **Offline map**, **Export &
   share** — see above.
 
 Universal slider ergonomics: double-click / double-tap any slider to
@@ -312,9 +409,12 @@ dragged close.
 
 ### Persistence
 - All preferences (units, basemap, colours, speed, chart state, camera
-  style, …) are saved to `localStorage` and restored on the next visit.
+  style, Director tuning, kk7 filters, …) are saved to `localStorage`
+  and restored on the next visit.
 - Panel positions (HUD, stats, chart, bottom bar) and the chart's size
   survive reloads too.
+- **Launch / LZ sites** and the **active offline map** are kept locally
+  (localStorage / IndexedDB) and restored automatically.
 - Recently loaded flights are kept in IndexedDB and listed on the
   landing screen for one-tap reload.
 
@@ -354,7 +454,8 @@ dragged close.
 | `.gpx` | Standard `<trkpt>` track-points, with elevation. |
 | `.kml` | Google Earth-style `<gx:Track>` / `<LineString>` (synthetic sample rate adjustable for time-less LineStrings). |
 | OpenAir `.txt` | Airspace files, loaded separately via settings → Airspace. |
-| `.fvmap` | Offline map bundle created by this viewer (settings → Offline map); load via Open / drag-and-drop. |
+| `.geojson` | Launch / LZ sites, imported / exported via settings → Launch & landing sites (features carry a `launch` / `lz` `type` property). |
+| `.fvmap` | Offline map bundle created by this viewer (settings → Offline map); load via Open / drag-and-drop. Carries basemap + DEM tiles, and optionally kk7 layers and sites. |
 
 ## Privacy
 
@@ -389,6 +490,9 @@ touch scrubbing, auto-hiding controls, wake lock).
 - Satellite basemap: © Esri World Imagery
 - Street basemap: © OpenStreetMap contributors
 - Terrain DEM: Mapzen / AWS Open Data Terrarium tiles (CC0)
+- Thermal & skyways heatmaps: © [thermal.kk7.ch](https://thermal.kk7.ch) (CC-BY-NC-SA)
+- Airspace tiles: © [openAIP](https://www.openaip.net) (free API key required)
+- Site-label glyphs & reverse geocoding: MapLibre demo fonts / © OpenStreetMap Nominatim
 
 ## License
 
