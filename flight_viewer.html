@@ -3700,10 +3700,16 @@ function finishSiteDraw(commit) {
   // playback -- resuming exactly where the flight was paused.
   if (window._setSiteDrawPan) window._setSiteDrawPan(false);
   if (_siteDrawCam && map) {
-    map.easeTo({ pitch: _siteDrawCam.pitch, bearing: _siteDrawCam.bearing,
-                 zoom: _siteDrawCam.zoom, duration: 400 });
-    if (_siteDrawCam.follow && window._setFollowPilot) window._setFollowPilot(true);
-    if (_siteDrawCam.playing) setPlaying(true);
+    const saved = _siteDrawCam;
+    map.easeTo({ pitch: saved.pitch, bearing: saved.bearing,
+                 zoom: saved.zoom, duration: 400 });
+    // Restore follow / playback only after the ease completes: follow's
+    // per-frame setCenter (a jumpTo internally) cancels any in-flight
+    // camera animation, which used to freeze the view mid-restore.
+    setTimeout(() => {
+      if (saved.follow && window._setFollowPilot) window._setFollowPilot(true);
+      if (saved.playing) setPlaying(true);
+    }, 450);
   }
   _siteDrawCam = null;
   applySitesLayer();
@@ -7534,6 +7540,10 @@ function centerOnPilotFrame(pos, dtMs) {
   // regardless of pitch, bearing, terrain exaggeration, or anything else
   // because we are using the *same* projection deck.gl renders with --
   // no camera-model assumptions of our own.
+  // Preferred solve: exact, using the same projection deck.gl renders
+  // with. dLng/dLat is "how far the pilot is from the point that
+  // currently projects to screen center", i.e. the center correction.
+  let dLng = null, dLat = null;
   if (vp && vp.unproject && vp.project) {
     let tgt = null;
     try { tgt = vp.unproject([cx, cy], { targetZ: alt_p }); } catch (_) {}
@@ -7544,58 +7554,78 @@ function centerOnPilotFrame(pos, dtMs) {
       // which case the "intersection" is behind the camera and the
       // returned point is garbage thousands of km away. Feeding that into
       // the center correction is what produced the violent runaway
-      // shaking on phones. A valid unprojection must project back onto
-      // the screen center; a degenerate one lands far away or off-screen.
+      // shaking on phones. A valid unprojection must project back near
+      // the screen center; a degenerate one lands screens away. The
+      // tolerance is deliberately loose (was 4 px): during pitch/zoom
+      // eases and over terrain the round-trip legitimately misses by a
+      // few pixels, and a tight gate made this path flap against the
+      // fallback every other frame -- one source of the follow jitter.
       let valid = false;
       try {
         const back = vp.project([tgt[0], tgt[1], alt_p]);
         valid = back && isFinite(back[0]) && isFinite(back[1])
-          && Math.hypot(back[0] - cx, back[1] - cy) < 4;
+          && Math.hypot(back[0] - cx, back[1] - cy) < Math.max(48, cx * 0.15);
       } catch (_) {}
       if (valid) {
-        let dLng = tgt[0] - lng_p;
-        let dLat = tgt[1] - lat_p;
-        // Sanity cap: two viewports of ground distance. Anything larger
-        // is a seek/teleport, which the low-pass below turns into a
-        // pleasant glide anyway.
-        const capDeg = mPerPx(lat_p, map.getZoom()) * cx * 4 / 111320;
-        const capLng = capDeg / Math.max(0.2, Math.cos(lat_p * Math.PI / 180));
-        const scale = Math.min(1,
-          capDeg / Math.max(Math.abs(dLat), 1e-12),
-          capLng / Math.max(Math.abs(dLng), 1e-12));
-        dLng *= scale;
-        dLat *= scale;
-        // LOW-PASS FILTER, time-constant form (framerate-independent).
-        // Earlier attempts -- one-shot exact centering, damping factors,
-        // dead bands, reversal-adaptive gain -- all either rang at frame
-        // rate (the setCenter->terrain-height->projection feedback loop
-        // at high pitch) or stuttered (dead band = stop-and-jump steps;
-        // reversal gain collapses during thermal circling where the
-        // correction direction legitimately alternates). Filtering the
-        // SETPOINT is the textbook fix: the camera glides toward the
-        // exact solution with tau ~ 140 ms, frame-to-frame oscillation of
-        // the raw correction averages out to nothing, continuous motion
-        // stays continuous, and seeks become a smooth catch-up pan.
-        const k = 1 - Math.exp(-(dtMs || 16.7) / 140);
-        dLng *= k;
-        dLat *= k;
-        const c0 = map.getCenter();
-        const newLng = c0.lng - dLng;
-        const newLat = c0.lat - dLat;
-        if (isFinite(newLng) && isFinite(newLat) && Math.abs(newLat) < 85) {
-          suppressMoveDirty = true;
-          map.setCenter([newLng, newLat], { animate: false });
-          suppressMoveDirty = false;
-          return;
-        }
+        dLng = tgt[0] - lng_p;
+        dLat = tgt[1] - lat_p;
       }
     }
   }
-  // Fallback: ground-only centering. Pilot will appear above center
-  // when pitched, but the map will not drift -- always stable.
-  suppressMoveDirty = true;
-  map.setCenter([lng_p, lat_p], { animate: false });
-  suppressMoveDirty = false;
+  // Analytic fallback with the SAME geometric meaning. The pilot lies on
+  // the camera's center ray when the look-at point sits AGL*tan(pitch)
+  // ahead of the pilot's ground position along the bearing. tan(75°) is
+  // finite, so this never degenerates -- and because it feeds the same
+  // cap + low-pass channel below, swapping between the exact and the
+  // analytic solve moves the camera by at most a few metres instead of
+  // teleporting. (The old fallback hard-recentered on the pilot's GROUND
+  // point with no filtering: at high pitch that throws the pilot to the
+  // top of -- or clean off -- the screen, which is exactly the
+  // "pilot left the screen after I dragged the view" failure.)
+  if (dLng == null) {
+    let ground = 0;
+    try { ground = map.queryTerrainElevation([lng_p, lat_p]) || 0; } catch (_) {}
+    const H = Math.max(0, alt_p - ground);
+    const P = map.getPitch() * Math.PI / 180;
+    const B = map.getBearing() * Math.PI / 180;
+    const ahead = H * Math.tan(P);
+    const mLat = 111320;
+    const mLon = 111320 * Math.cos(lat_p * Math.PI / 180) || 1;
+    const c0 = map.getCenter();
+    dLng = c0.lng - (lng_p + ahead * Math.sin(B) / mLon);
+    dLat = c0.lat - (lat_p + ahead * Math.cos(B) / mLat);
+  }
+  // Sanity cap: two viewports of ground distance. Anything larger is a
+  // seek/teleport, which the low-pass below turns into a pleasant glide.
+  const capDeg = mPerPx(lat_p, map.getZoom()) * cx * 4 / 111320;
+  const capLng = capDeg / Math.max(0.2, Math.cos(lat_p * Math.PI / 180));
+  const scale = Math.min(1,
+    capDeg / Math.max(Math.abs(dLat), 1e-12),
+    capLng / Math.max(Math.abs(dLng), 1e-12));
+  dLng *= scale;
+  dLat *= scale;
+  // LOW-PASS FILTER, time-constant form (framerate-independent).
+  // Earlier attempts -- one-shot exact centering, damping factors,
+  // dead bands, reversal-adaptive gain -- all either rang at frame
+  // rate (the setCenter->terrain-height->projection feedback loop
+  // at high pitch) or stuttered (dead band = stop-and-jump steps;
+  // reversal gain collapses during thermal circling where the
+  // correction direction legitimately alternates). Filtering the
+  // SETPOINT is the textbook fix: the camera glides toward the
+  // exact solution with tau ~ 140 ms, frame-to-frame oscillation of
+  // the raw correction averages out to nothing, continuous motion
+  // stays continuous, and seeks become a smooth catch-up pan.
+  const k = 1 - Math.exp(-(dtMs || 16.7) / 140);
+  dLng *= k;
+  dLat *= k;
+  const c0 = map.getCenter();
+  const newLng = c0.lng - dLng;
+  const newLat = c0.lat - dLat;
+  if (isFinite(newLng) && isFinite(newLat) && Math.abs(newLat) < 85) {
+    suppressMoveDirty = true;
+    map.setCenter([newLng, newLat], { animate: false });
+    suppressMoveDirty = false;
+  }
 }
 // True while a custom pan/orbit pointer-drag is in flight (state lives in
 // the setupAppUi closure; exposed via window._dragActive).
