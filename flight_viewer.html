@@ -1441,6 +1441,24 @@
           <span class="lbl" title="The active offline map is remembered in this browser and restored automatically on the next visit. This removes the stored copy (the downloaded .fvmap file is unaffected).">Stored copy</span>
           <div class="ctl"><button id="offlineForgetBtn" class="btn-small" style="color:var(--fg-mute)">Forget</button></div>
         </div>
+        <div class="row">
+          <span class="lbl" title="Automatically keep every downloaded map / terrain / kk7 / airspace tile in this browser and reuse it on later visits — previously browsed areas work offline and cost no bandwidth. Oldest tiles are evicted above the size cap.">Tile cache</span>
+          <div class="ctl"><input type="checkbox" id="tileCacheCb" checked></div>
+        </div>
+        <div class="row" id="rowTileCacheMax">
+          <span class="lbl" title="Cache size cap. When exceeded, the least-recently-used tiles are removed first.">Max size</span>
+          <div class="ctl">
+            <input type="range" id="tileCacheMax" min="50" max="1000" step="50" value="300" data-default="300" style="width:100px">
+            <span id="tileCacheMaxV" style="min-width:52px;color:var(--fg-dim)">300 MB</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" style="font-size:11px;color:var(--fg-mute)">Cached</span>
+          <div class="ctl">
+            <span id="tileCacheUse" style="font-size:11px;color:var(--fg-dim)">—</span>
+            <button id="tileCacheClear" class="btn-small" style="color:var(--fg-mute)">Clear</button>
+          </div>
+        </div>
         <div style="font-size:11px;color:var(--fg-mute);line-height:1.5">
           Packs are named after the area + build time (e.g.
           <code>Bassano_20260713-1425.fvmap</code>). The active map is also
@@ -2542,6 +2560,7 @@ const PERSIST_KEYS = [
   'dirIntroSec', 'dirFinaleSec',
   'dirZoomIntro', 'dirZoomThermal', 'dirZoomGlide',
   'dirPitchIntro', 'dirPitchThermal', 'dirPitchGlide', 'dirPitchFinale',
+  'tileCacheOn', 'tileCacheMaxMB',
 ];
 const PREFS_SCHEMA = 6;
 const PERSIST_SET = new Set(PERSIST_KEYS);
@@ -2679,6 +2698,13 @@ const rawState = {
   kk7Opacity: 0.3,      // raster opacity for both kk7 layers
   kk7Season: 'all',     // 'all' | 'jan' | 'apr' | 'jul' | 'oct' (±1.5 months)
   kk7Tod: 'all',        // 'all' | '04' | '07' | '10' (hours after sunrise)
+
+  // Automatic tile cache: every basemap / DEM / kk7 / glyph tile that is
+  // downloaded gets stored in IndexedDB and served from there on the next
+  // visit -- browsing previously seen terrain works offline and saves
+  // bandwidth. LRU-evicted above the size cap.
+  tileCacheOn: true,
+  tileCacheMaxMB: 300,
 
   // openAIP worldwide airspace raster overlay. Tiles need a free API key
   // (openaip.net → account → API clients); stored locally only. When a key
@@ -3132,6 +3158,181 @@ function offlineKeyForUrl(url) {
   if (m) return `kk7/${m[1]}/${m[2]}/${m[3]}/${m[4]}`;
   return null;
 }
+// ---------------------------------------------------------------------------
+// Automatic tile cache. Every tile-shaped download (basemap, DEM, kk7,
+// openAIP, glyphs) is stored in its own IndexedDB and replayed from there
+// on later visits: previously browsed terrain works offline and repeat
+// visits cost no bandwidth. Implemented as a window.fetch wrapper --
+// MapLibre loads raster/DEM tiles and glyphs through global fetch, so no
+// engine hooks are needed. The .fvmap path (transformTileRequest) still
+// wins first via data: URLs, which this wrapper ignores.
+// LRU-ish: entries carry a timestamp, refreshed on hit (at most hourly);
+// when total size passes the cap, oldest entries are evicted.
+// ---------------------------------------------------------------------------
+const TC_DB = 'fv_tilecache', TC_STORE = 'tiles', TC_META = 'meta';
+function tcOpenRaw(version) {
+  return new Promise((res, rej) => {
+    const r = version ? indexedDB.open(TC_DB, version) : indexedDB.open(TC_DB);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains(TC_STORE)) db.createObjectStore(TC_STORE);
+      const st = r.transaction.objectStore(TC_STORE);
+      if (!st.indexNames.contains('ts')) st.createIndex('ts', 'ts');
+      if (!db.objectStoreNames.contains(TC_META)) db.createObjectStore(TC_META);
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('tile cache open blocked'));
+  });
+}
+// One persistent connection, opened lazily and reused for every tile --
+// hundreds of concurrent tile fetches per pan must not each open/close
+// the database. Reset on versionchange so another tab can upgrade.
+let _tcDbP = null;
+function tcDb() {
+  if (!_tcDbP) {
+    _tcDbP = (async () => {
+      let db = await tcOpenRaw();
+      if (!db.objectStoreNames.contains(TC_STORE)
+          || !db.objectStoreNames.contains(TC_META)) {
+        const v = db.version + 1;
+        db.close();
+        db = await tcOpenRaw(v);   // self-heal an interrupted upgrade
+      }
+      db.onversionchange = () => { try { db.close(); } catch (_) {} _tcDbP = null; };
+      return db;
+    })();
+    _tcDbP.catch(() => { _tcDbP = null; });
+  }
+  return _tcDbP;
+}
+let _tcTotal = null;               // cached total bytes (meta mirror)
+async function tcWithStore(mode, fn) {
+  const db = await tcDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction([TC_STORE, TC_META], mode);
+    const out = fn(tx.objectStore(TC_STORE), tx.objectStore(TC_META));
+    tx.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function tcGet(key) {
+  const db = await tcDb();
+  return new Promise((res, rej) => {
+    const rq = db.transaction(TC_STORE, 'readonly')
+      .objectStore(TC_STORE).get(key);
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  });
+}
+async function tcTouch(key, rec) {
+  if (Date.now() - rec.ts < 3600000) return;   // refresh at most hourly
+  rec.ts = Date.now();
+  try {
+    await tcWithStore('readwrite', st => { st.put(rec, key); });
+  } catch (_) {}
+}
+async function tcPut(key, blob) {
+  // Store raw bytes + mime rather than the Blob itself: Blobs revived
+  // from IndexedDB have a history of tripping createImageBitmap in some
+  // Chromium builds, and an ArrayBuffer round-trips bit-exactly.
+  const buf = await blob.arrayBuffer();
+  const rec = { b: buf, mt: blob.type || '', ts: Date.now(), sz: buf.byteLength };
+  await tcWithStore('readwrite', (st, meta) => {
+    st.put(rec, key);
+    const g = meta.get('total');
+    g.onsuccess = () => {
+      _tcTotal = (g.result || 0) + rec.sz;
+      meta.put(_tcTotal, 'total');
+    };
+  });
+  const capBytes = (state.tileCacheMaxMB || 300) * 1048576;
+  if (_tcTotal != null && _tcTotal > capBytes) tcEvict(capBytes * 0.9);
+}
+// Delete oldest entries (ts index) until total falls below targetBytes.
+let _tcEvicting = false;
+async function tcEvict(targetBytes) {
+  if (_tcEvicting) return;
+  _tcEvicting = true;
+  try {
+    await tcWithStore('readwrite', (st, meta) => {
+      const g = meta.get('total');
+      g.onsuccess = () => {
+        let total = g.result || 0;
+        const cur = st.index('ts').openCursor();
+        cur.onsuccess = () => {
+          const c = cur.result;
+          if (!c || total <= targetBytes) {
+            _tcTotal = total;
+            meta.put(total, 'total');
+            return;
+          }
+          total -= (c.value && c.value.sz) || 0;
+          c.delete();
+          c.continue();
+        };
+      };
+    });
+  } catch (_) {} finally { _tcEvicting = false; }
+}
+async function tcClear() {
+  try {
+    await tcWithStore('readwrite', (st, meta) => {
+      st.clear(); meta.put(0, 'total');
+    });
+    _tcTotal = 0;
+  } catch (_) {}
+}
+async function tcTotalBytes() {
+  if (_tcTotal != null) return _tcTotal;
+  try {
+    const db = await tcDb();
+    _tcTotal = await new Promise((res, rej) => {
+      const rq = db.transaction(TC_META, 'readonly')
+        .objectStore(TC_META).get('total');
+      rq.onsuccess = () => res(rq.result || 0);
+      rq.onerror = () => rej(rq.error);
+    });
+  } catch (_) { _tcTotal = 0; }
+  return _tcTotal;
+}
+// Cacheable-URL -> cache key. Tile kinds reuse the .fvmap key scheme;
+// glyphs and openAIP get their own namespaces (query strings stripped so
+// the openAIP api key never lands in the cache key).
+function tileCacheKeyFor(url) {
+  const k = offlineKeyForUrl(url);
+  if (k) return k;
+  let m = url.match(/demotiles\.maplibre\.org\/font\/([^?]+)/);
+  if (m) return 'glyph/' + m[1];
+  m = url.match(/api\.tiles\.openaip\.net\/api\/data\/openaip\/(\d+)\/(\d+)\/(\d+)\.png/);
+  if (m) return `oaip/${m[1]}/${m[2]}/${m[3]}`;
+  return null;
+}
+const _origFetch = window.fetch.bind(window);
+window.fetch = async function (input, init) {
+  let key = null;
+  try {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (state.tileCacheOn && /^https?:/.test(url)) key = tileCacheKeyFor(url);
+  } catch (_) {}
+  if (!key) return _origFetch(input, init);
+  try {
+    const hit = await tcGet(key);
+    if (hit && hit.b) {
+      tcTouch(key, hit);
+      const mime = hit.mt || (hit.b.type /* legacy Blob records */) || 'application/octet-stream';
+      return new Response(hit.b, { status: 200,
+        headers: { 'Content-Type': mime } });
+    }
+  } catch (_) { /* cache broken -- go to network */ }
+  const resp = await _origFetch(input, init);
+  if (resp && resp.ok) {
+    try { resp.clone().blob().then(b => tcPut(key, b)).catch(() => {}); }
+    catch (_) {}
+  }
+  return resp;
+};
+
 function transformTileRequest(url) {
   if (offlineTiles) {
     const k = offlineKeyForUrl(url);
@@ -3355,6 +3556,35 @@ function wireOfflineUi() {
   const forget = document.getElementById('offlineForgetBtn');
   if (forget) forget.onclick = () => { forgetOfflineMap(); };
   updateOfflineStatusUi();
+
+  // --- automatic tile cache controls ---
+  const useEl = document.getElementById('tileCacheUse');
+  const updateUse = () => {
+    tcTotalBytes().then(b => {
+      if (useEl) useEl.textContent = (b / 1048576).toFixed(1) + ' MB';
+    }).catch(() => { if (useEl) useEl.textContent = '—'; });
+  };
+  const cb = document.getElementById('tileCacheCb');
+  if (cb) {
+    cb.checked = state.tileCacheOn;
+    cb.addEventListener('change', e => { state.tileCacheOn = e.target.checked; });
+  }
+  const maxEl = document.getElementById('tileCacheMax');
+  const maxV = document.getElementById('tileCacheMaxV');
+  if (maxEl) {
+    maxEl.addEventListener('input', e => {
+      const v = parseInt(e.target.value, 10);
+      if (isFinite(v)) state.tileCacheMaxMB = v;
+      if (maxV) maxV.textContent = state.tileCacheMaxMB + ' MB';
+      tcEvict(state.tileCacheMaxMB * 1048576 * 0.9).then(updateUse);
+    });
+    if (maxV) maxV.textContent = state.tileCacheMaxMB + ' MB';
+  }
+  const clr = document.getElementById('tileCacheClear');
+  if (clr) clr.onclick = () => {
+    tcClear().then(() => { updateUse(); showStatus('Tile cache cleared'); });
+  };
+  updateUse();
 }
 
 function wireSitesUi() {
@@ -6558,6 +6788,7 @@ function setupAppUi() {
       ['dirPitchThermal', state.dirPitchThermal], ['dirPitchGlide', state.dirPitchGlide],
       ['dirPitchFinale', state.dirPitchFinale], ['dirIntroSec', state.dirIntroSec],
       ['dirFinaleSec', state.dirFinaleSec],
+      ['tileCacheMax', state.tileCacheMaxMB],
     ];
     for (const [id, v] of restore) {
       const el = document.getElementById(id);
@@ -6611,7 +6842,8 @@ function setupAppUi() {
         ['xcTriCb', 'showXcTri'], ['curtainCb', 'showCurtain'],
         ['trackFadeCb', 'trackFadeOn'], ['curtainFadeCb', 'curtainFadeOn'],
         ['kk7ShowCb', 'kk7Show'], ['kk7ThermalsCb', 'kk7Thermals'],
-        ['kk7SkywaysCb', 'kk7Skyways'], ['openaipShowCb', 'openaipShow']]) {
+        ['kk7SkywaysCb', 'kk7Skyways'], ['openaipShowCb', 'openaipShow'],
+        ['tileCacheCb', 'tileCacheOn']]) {
       const cb = document.getElementById(id);
       if (cb && cb.checked !== FACTORY_STATE[key]) {
         cb.checked = FACTORY_STATE[key];
@@ -7732,7 +7964,14 @@ let _dirFitCam = null;          // {center, zoom} framing the whole track,
 // segment (next thermal, glide, shot, finale...) begins.
 let _dirSetZoom = null;
 let _dirZoomOverride = null;
+let _dirZoomOverrideAt = 0;     // performance.now() of the last manual zoom
 let _dirLastSeg = null;
+// How long a manual zoom survives SEGMENT changes (real time). Within one
+// segment it always holds; at a segment boundary it is kept while fresh
+// (the user zoomed in to inspect something -- crossing into the next
+// glide half a second later shouldn't yank the framing away) and released
+// once stale, so the choreography returns on the next natural cut.
+const DIR_ZOOM_HOLD_MS = 45000;
 function directorPhaseFor(ms) {
   if ((T1 - ms) / 1000 < state.dirFinaleSec) return 'finale';
   if ((ms - T0) / 1000 < state.dirIntroSec) return 'intro';
@@ -7789,6 +8028,7 @@ function directorCamFrame(headingDeg, dtMs) {
   // framing instead of pulling back to the phase default.
   if (_dirSetZoom != null && Math.abs(map.getZoom() - _dirSetZoom) > 0.05) {
     _dirZoomOverride = map.getZoom();
+    _dirZoomOverrideAt = performance.now();
   }
   // A seek (backwards, or a jump of over a minute) resets the phase state
   // so the camera adopts the new context immediately.
@@ -7814,9 +8054,16 @@ function directorCamFrame(headingDeg, dtMs) {
   suppressMoveDirty = true;
   const shot = dirShotAt(ms);
   // New segment (a different shot, or a phase flip -- next thermal, the
-  // glide after it, the finale...) releases the manual-zoom override.
+  // glide after it, the finale...) releases the manual-zoom override,
+  // but only once it has gone stale: a fresh zoom-in survives the next
+  // boundary so the user can actually look at what they zoomed in on.
   const seg = shot || _dirPhase;
-  if (seg !== _dirLastSeg) { _dirLastSeg = seg; _dirZoomOverride = null; }
+  if (seg !== _dirLastSeg) {
+    _dirLastSeg = seg;
+    if (performance.now() - _dirZoomOverrideAt > DIR_ZOOM_HOLD_MS) {
+      _dirZoomOverride = null;
+    }
+  }
   let zoomTarget, pitchTarget;
   if (shot) {
     // User-pinned shot overrides the automatic phase for this range.
