@@ -3169,16 +3169,23 @@ function offlineKeyForUrl(url) {
 // LRU-ish: entries carry a timestamp, refreshed on hit (at most hourly);
 // when total size passes the cap, oldest entries are evicted.
 // ---------------------------------------------------------------------------
-const TC_DB = 'fv_tilecache', TC_STORE = 'tiles', TC_META = 'meta';
+// TC_STORE is 'tiles2': the original 'tiles' store held records written in
+// an older format that some builds served undecodably to MapLibre ("source
+// image could not be decoded"), wedging the map. Moving to a new store
+// abandons every such record cleanly; the old store is dropped on upgrade.
+const TC_DB = 'fv_tilecache', TC_STORE = 'tiles2', TC_META = 'meta';
 function tcOpenRaw(version) {
   return new Promise((res, rej) => {
     const r = version ? indexedDB.open(TC_DB, version) : indexedDB.open(TC_DB);
     r.onupgradeneeded = () => {
       const db = r.result;
+      if (db.objectStoreNames.contains('tiles')) db.deleteObjectStore('tiles');
       if (!db.objectStoreNames.contains(TC_STORE)) db.createObjectStore(TC_STORE);
       const st = r.transaction.objectStore(TC_STORE);
       if (!st.indexNames.contains('ts')) st.createIndex('ts', 'ts');
       if (!db.objectStoreNames.contains(TC_META)) db.createObjectStore(TC_META);
+      // Old total counted the abandoned tiles -- reset the usage tally.
+      try { r.transaction.objectStore(TC_META).put(0, 'total'); } catch (_) {}
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -3318,11 +3325,14 @@ window.fetch = async function (input, init) {
   if (!key) return _origFetch(input, init);
   try {
     const hit = await tcGet(key);
-    if (hit && hit.b) {
+    // Serve ONLY well-formed new-format records (raw bytes + mime). Anything
+    // else (a legacy Blob, a truncated write) is ignored so it can never
+    // reach MapLibre as an undecodable image -- we fall through to the
+    // network and overwrite it in the correct format.
+    if (hit && hit.b instanceof ArrayBuffer && hit.mt && hit.b.byteLength > 0) {
       tcTouch(key, hit);
-      const mime = hit.mt || (hit.b.type /* legacy Blob records */) || 'application/octet-stream';
       return new Response(hit.b, { status: 200,
-        headers: { 'Content-Type': mime } });
+        headers: { 'Content-Type': hit.mt } });
     }
   } catch (_) { /* cache broken -- go to network */ }
   const resp = await _origFetch(input, init);
@@ -7730,133 +7740,136 @@ function centerOnPilot() {
   if (window._setFollowPilot) window._setFollowPilot(!state.follow);
 }
 
-// Per-frame "follow pilot" centering -- analytical, one-shot.
+// Per-frame "follow pilot" positioning -- VIRTUAL DRONE CAMERA.
 //
-// The pilot must lie on the camera's center ray for it to project to
-// screen center. At pitch P, that ray descends at angle P from vertical.
-// A pilot at height H above the terrain therefore lies horizontally
-// distance H*tan(P) BACK from the map's look-at point, in the direction
-// opposite to the camera's forward (bearing) vector. Equivalently:
+// Principle (the user's framing, and the correct one): the camera is a
+// drone. Its position is computed FROM THE PILOT -- eye = pilot +
+// D * (view-direction reversed) -- and the terrain is scenery, never an
+// input to camera motion. MapLibre's own camera is centre-anchored: the
+// eye's altitude implicitly rides on the terrain height under the map
+// centre, which is exactly why every centre-feedback follow scheme
+// spiralled or drifted over 3-D terrain (the ground under the look-at
+// point changes as the bearing orbits, dragging the eye with it).
 //
-//     lookAtCenter = pilotGround + H * tan(P) * forwardDir
+// So each frame we do the drone math first and then SOLVE for the
+// (center, zoom) MapLibre needs to realise that eye pose, explicitly
+// cancelling the terrain height out of the equations:
 //
-// where forwardDir = (sin(B), cos(B)) in (lng, lat) with longitude
-// scaled by cos(lat). One setCenter call per frame, deterministic, no
-// projection round-trip -- so no oscillation.
+//   view    = ( sinP·sinB, sinP·cosB, -cosP )        pitch P, bearing B
+//   eye     = pilot - D·view                          D from nominal zoom
+//   ctcd(z) = ctcdPx · mPerPx(lat, z)                 eye→centre distance
+//   centre  = eye_xy + ctcd(z)·sinP·(sinB, cosB)
+//   elev(centre) + ctcd(z)·cosP = eye_z               → solve z
 //
-// Previous implementation used map.panBy() driven by the deck.gl-vs-
-// MapLibre projection residual. panBy([dx, dy]) is not a screen-space
-// shift on a pitched camera; it unprojects (cx+dx, cy+dy) to a ground
-// lng/lat and recenters there. Near the horizon that unprojection is
-// singular, so each frame's correction would overshoot, then the next
-// frame's residual would overshoot the other way -- the runaway / jitter
-// the user was seeing even with playback paused.
-//
-// We subtract the terrain elevation under the pilot (if MapLibre's
-// terrain is loaded) so the H we use is true height above ground, not
-// world altitude. The terrain query already includes the exaggeration
-// factor that the pilot altitude is also scaled by, so the units match.
+// The nominal zoom (what Director tuning and the user's wheel express)
+// now means "distance to the PILOT", not "scale at the ground": with the
+// pilot high over a valley the camera automatically rides higher, showing
+// MORE terrain and track -- while the pilot marker, whose metres are
+// sized from the applied zoom, keeps a constant screen size. Full
+// cinematic pitch is preserved at any AGL.
+let camNominalZoom = null;      // zoom in "distance to pilot" terms
+let _camLastApplied = null;     // zoom we last wrote (user-input detection)
+let _camLastTs = 0;             // last follow frame (gap => skip absorption)
+let _camTrim = 0;               // slow integral trim (m): absorbs the small
+                                //   systematic gap between our pinhole
+                                //   model and MapLibre's real camera (fov /
+                                //   mercator-scale details), keeping the
+                                //   pilot exactly on centre. Time constant
+                                //   ~1 s -- far too slow to interact with
+                                //   the per-frame dynamics, so it cannot
+                                //   reintroduce the old feedback spiral.
 function centerOnPilotFrame(pos, dtMs) {
   if (!map) return;
   const lng_p = pos[0], lat_p = pos[1], alt_p = pos[2] || 0;
-  const c = map.getContainer();
-  const cx = c.clientWidth / 2, cy = c.clientHeight / 2;
+  const latR = lat_p * Math.PI / 180;
+  const mLat = 111320;
+  const mLon = 111320 * Math.cos(latR) || 1;
+  const P = map.getPitch() * Math.PI / 180;
+  const B = map.getBearing() * Math.PI / 180;
+  const sinP = Math.sin(P), cosP = Math.max(0.15, Math.cos(P));
+  const fwdX = Math.sin(B), fwdY = Math.cos(B);
 
+  // Nominal zoom bookkeeping. Wheel / pinch between our frames shows up
+  // as a zoom differing from what we last applied -- absorb the delta so
+  // manual zooming keeps working. After a gap the comparison may be
+  // stale (finale's fit zoom, pause), so skip absorption then -- UNLESS
+  // the user touched the camera during the gap (a mobile pinch pauses
+  // follow via the tick's pinching guard; their new zoom must be kept,
+  // not snapped back).
+  const now = performance.now();
+  const zMap = map.getZoom();
+  if (camNominalZoom == null || !isFinite(camNominalZoom)) camNominalZoom = zMap;
+  if (_camLastApplied != null
+      && (now - _camLastTs < 250 || lastUserCamMs > _camLastTs)) {
+    const d = zMap - _camLastApplied;
+    if (Math.abs(d) > 0.001) camNominalZoom += d;
+  }
+  _camLastTs = now;
+  camNominalZoom = Math.max(map.getMinZoom(),
+    Math.min(map.getMaxZoom(), camNominalZoom));
+
+  // Drone pose: eye behind the pilot along the reversed view direction.
+  const t = map.transform;
+  const ctcdPx = (t && t.cameraToCenterDistance)
+    || 1.5 * map.getContainer().clientHeight;
+  const D = ctcdPx * mPerPx(lat_p, camNominalZoom);   // eye→pilot metres
+  const eLng = lng_p - D * sinP * fwdX / mLon;        // eye is BEHIND the
+  const eLat = lat_p - D * sinP * fwdY / mLat;        //   pilot (minus view)
+  const eyeZ = alt_p + D * cosP;
+
+  // Solve applied zoom so the eye lands at eyeZ given the terrain under
+  // the centre. elev() is a slow function of position -- two fixed-point
+  // iterations are ample.
+  let zA = camNominalZoom;
+  let cLng = lng_p, cLat = lat_p;
+  for (let i = 0; i < 2; i++) {
+    const ctcdM = ctcdPx * mPerPx(lat_p, zA);
+    cLng = eLng + ctcdM * sinP * fwdX / mLon;
+    cLat = eLat + ctcdM * sinP * fwdY / mLat;
+    let elev = 0;
+    try { elev = map.queryTerrainElevation([cLng, cLat]) || 0; } catch (_) {}
+    const hz = Math.max(20, eyeZ - elev);       // eye height above centre elev
+    const ctcdNeeded = hz / cosP;
+    zA = Math.log2(ctcdPx * 156543.03 * Math.cos(latR) / ctcdNeeded);
+  }
+  zA = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), zA));
+
+  // Slow integral trim: measure the pilot's vertical screen error with
+  // the renderer's own projection and integrate it into a metre offset
+  // along the bearing. This nulls the ~10% model mismatch so the pilot
+  // sits exactly on centre; the 900 ms time constant keeps it out of the
+  // fast dynamics entirely.
   const dk = overlay && overlay._deck;
   const vp = dk && dk.viewManager && dk.viewManager.getViewports()[0];
-
-  // One-shot deck.gl-based centering. Ask the viewport which lng/lat at
-  // the pilot's altitude currently sits at screen center; the pilot has
-  // to be at that lng/lat for it to project to screen center. So shift
-  // the map center by the negative of (target - pilot). This works
-  // regardless of pitch, bearing, terrain exaggeration, or anything else
-  // because we are using the *same* projection deck.gl renders with --
-  // no camera-model assumptions of our own.
-  // Preferred solve: exact, using the same projection deck.gl renders
-  // with. dLng/dLat is "how far the pilot is from the point that
-  // currently projects to screen center", i.e. the center correction.
-  let dLng = null, dLat = null;
-  if (vp && vp.unproject && vp.project) {
-    let tgt = null;
-    try { tgt = vp.unproject([cx, cy], { targetZ: alt_p }); } catch (_) {}
-    if (tgt && isFinite(tgt[0]) && isFinite(tgt[1])) {
-      // DEGENERACY GUARD. At high pitch the ray through screen center can
-      // run nearly parallel to the z=alt_p plane -- or the camera eye can
-      // sit BELOW that plane (zoomed-in oblique view of a high pilot), in
-      // which case the "intersection" is behind the camera and the
-      // returned point is garbage thousands of km away. Feeding that into
-      // the center correction is what produced the violent runaway
-      // shaking on phones. A valid unprojection must project back near
-      // the screen center; a degenerate one lands screens away. The
-      // tolerance is deliberately loose (was 4 px): during pitch/zoom
-      // eases and over terrain the round-trip legitimately misses by a
-      // few pixels, and a tight gate made this path flap against the
-      // fallback every other frame -- one source of the follow jitter.
-      let valid = false;
-      try {
-        const back = vp.project([tgt[0], tgt[1], alt_p]);
-        valid = back && isFinite(back[0]) && isFinite(back[1])
-          && Math.hypot(back[0] - cx, back[1] - cy) < Math.max(48, cx * 0.15);
-      } catch (_) {}
-      if (valid) {
-        dLng = tgt[0] - lng_p;
-        dLat = tgt[1] - lat_p;
+  if (vp && vp.project) {
+    try {
+      const s = vp.project([lng_p, lat_p, alt_p]);
+      const cyc = map.getContainer().clientHeight / 2;
+      if (s && isFinite(s[1])) {
+        const kT = 1 - Math.exp(-(dtMs || 16.7) / 900);
+        _camTrim += (s[1] - cyc) * mPerPx(lat_p, zMap) * kT;
+        const cap = 0.6 * D + 200;
+        _camTrim = Math.max(-cap, Math.min(cap, _camTrim));
       }
-    }
+    } catch (_) { /* keep current trim */ }
   }
-  // Analytic fallback with the SAME geometric meaning. The pilot lies on
-  // the camera's center ray when the look-at point sits AGL*tan(pitch)
-  // ahead of the pilot's ground position along the bearing. tan(75°) is
-  // finite, so this never degenerates -- and because it feeds the same
-  // cap + low-pass channel below, swapping between the exact and the
-  // analytic solve moves the camera by at most a few metres instead of
-  // teleporting. (The old fallback hard-recentered on the pilot's GROUND
-  // point with no filtering: at high pitch that throws the pilot to the
-  // top of -- or clean off -- the screen, which is exactly the
-  // "pilot left the screen after I dragged the view" failure.)
-  if (dLng == null) {
-    let ground = 0;
-    try { ground = map.queryTerrainElevation([lng_p, lat_p]) || 0; } catch (_) {}
-    const H = Math.max(0, alt_p - ground);
-    const P = map.getPitch() * Math.PI / 180;
-    const B = map.getBearing() * Math.PI / 180;
-    const ahead = H * Math.tan(P);
-    const mLat = 111320;
-    const mLon = 111320 * Math.cos(lat_p * Math.PI / 180) || 1;
-    const c0 = map.getCenter();
-    dLng = c0.lng - (lng_p + ahead * Math.sin(B) / mLon);
-    dLat = c0.lat - (lat_p + ahead * Math.cos(B) / mLat);
-  }
-  // Sanity cap: two viewports of ground distance. Anything larger is a
-  // seek/teleport, which the low-pass below turns into a pleasant glide.
-  const capDeg = mPerPx(lat_p, map.getZoom()) * cx * 4 / 111320;
-  const capLng = capDeg / Math.max(0.2, Math.cos(lat_p * Math.PI / 180));
-  const scale = Math.min(1,
-    capDeg / Math.max(Math.abs(dLat), 1e-12),
-    capLng / Math.max(Math.abs(dLng), 1e-12));
-  dLng *= scale;
-  dLat *= scale;
-  // LOW-PASS FILTER, time-constant form (framerate-independent).
-  // Earlier attempts -- one-shot exact centering, damping factors,
-  // dead bands, reversal-adaptive gain -- all either rang at frame
-  // rate (the setCenter->terrain-height->projection feedback loop
-  // at high pitch) or stuttered (dead band = stop-and-jump steps;
-  // reversal gain collapses during thermal circling where the
-  // correction direction legitimately alternates). Filtering the
-  // SETPOINT is the textbook fix: the camera glides toward the
-  // exact solution with tau ~ 140 ms, frame-to-frame oscillation of
-  // the raw correction averages out to nothing, continuous motion
-  // stays continuous, and seeks become a smooth catch-up pan.
+  // Pilot below centre => look-at sits too far ahead => pull it back.
+  const cLng2 = cLng - _camTrim * fwdX / mLon;
+  const cLat2 = cLat - _camTrim * fwdY / mLat;
+
+  // Low-pass centre and zoom toward the drone solution (tau ~140 ms):
+  // continuous flight stays glassy, seeks become a smooth catch-up move.
   const k = 1 - Math.exp(-(dtMs || 16.7) / 140);
-  dLng *= k;
-  dLat *= k;
   const c0 = map.getCenter();
-  const newLng = c0.lng - dLng;
-  const newLat = c0.lat - dLat;
-  if (isFinite(newLng) && isFinite(newLat) && Math.abs(newLat) < 85) {
+  const newLng = c0.lng + (cLng2 - c0.lng) * k;
+  const newLat = c0.lat + (cLat2 - c0.lat) * k;
+  const newZoom = zMap + (zA - zMap) * k;
+  if (isFinite(newLng) && isFinite(newLat) && isFinite(newZoom)
+      && Math.abs(newLat) < 85) {
     suppressMoveDirty = true;
-    map.setCenter([newLng, newLat], { animate: false });
+    map.jumpTo({ center: [newLng, newLat], zoom: newZoom });
     suppressMoveDirty = false;
+    _camLastApplied = newZoom;
   }
 }
 // True while a custom pan/orbit pointer-drag is in flight (state lives in
@@ -7962,6 +7975,8 @@ let _dirFitCam = null;          // {center, zoom} framing the whole track,
 // override captured when the next frame starts at a different zoom, and
 // the phase/shot segment the override belongs to -- it clears when a new
 // segment (next thermal, glide, shot, finale...) begins.
+let _dirZoom = null;            // Director's eased NOMINAL zoom (distance
+                                //   to pilot; the drone camera applies it)
 let _dirSetZoom = null;
 let _dirZoomOverride = null;
 let _dirZoomOverrideAt = 0;     // performance.now() of the last manual zoom
@@ -8023,18 +8038,23 @@ function directorCamFrame(headingDeg, dtMs) {
   const ms = state.currentMs;
   const want = directorPhaseFor(ms);
   const prevPhase = _dirPhase;
-  // A manual pinch / wheel while we weren't looking moved the zoom away
-  // from where the last frame left it: keep tracking at the user's
-  // framing instead of pulling back to the phase default.
-  if (_dirSetZoom != null && Math.abs(map.getZoom() - _dirSetZoom) > 0.05) {
-    _dirZoomOverride = map.getZoom();
+  // A manual pinch / wheel between frames is absorbed into the drone
+  // camera's NOMINAL zoom (centerOnPilotFrame); if that nominal moved
+  // away from the nominal we last set, the user re-framed -- keep
+  // tracking at their distance instead of pulling back to the phase
+  // default. (map.getZoom() itself is the terrain-compensated applied
+  // zoom and legitimately differs from the nominal every frame, so it
+  // must NOT be compared here.)
+  if (_dirSetZoom != null && camNominalZoom != null
+      && Math.abs(camNominalZoom - _dirSetZoom) > 0.05) {
+    _dirZoomOverride = camNominalZoom;
     _dirZoomOverrideAt = performance.now();
   }
   // A seek (backwards, or a jump of over a minute) resets the phase state
   // so the camera adopts the new context immediately.
   if (_dirLastMs < 0 || ms < _dirLastMs || ms - _dirLastMs > 60000) {
     _dirPhase = want; _dirCandidate = null;
-    _dirZoomOverride = null; _dirSetZoom = null;
+    _dirZoomOverride = null; _dirSetZoom = null; _dirZoom = null;
   } else if (want !== _dirPhase) {
     if (want === 'intro' || want === 'finale') {
       _dirPhase = want; _dirCandidate = null;   // hard time boundaries
@@ -8104,13 +8124,23 @@ function directorCamFrame(headingDeg, dtMs) {
     }
   }
   // Distance: ease toward the framing zoom of the shot / phase, unless
-  // the user pinned their own zoom for this segment.
+  // the user pinned their own zoom for this segment. Outside the finale
+  // the zoom is NOT written to the map here -- it feeds the drone-follow
+  // camera as its nominal "distance to pilot", which converts it to the
+  // terrain-compensated applied zoom (centerOnPilotFrame). In the finale
+  // the follow camera is released, so the fit zoom is applied directly.
   if (_dirZoomOverride != null) zoomTarget = _dirZoomOverride;
-  const z = map.getZoom();
-  if (zoomTarget != null && Math.abs(zoomTarget - z) > 0.02) {
-    map.setZoom(z + (zoomTarget - z) * Math.min(1, dtMs / 2500));
+  if (zoomTarget != null) {
+    if (_dirZoom == null || !isFinite(_dirZoom)) _dirZoom = zoomTarget;
+    _dirZoom += (zoomTarget - _dirZoom) * Math.min(1, dtMs / 2500);
+    if (_dirPhase === 'finale' && !shot) {
+      const z = map.getZoom();
+      if (Math.abs(_dirZoom - z) > 0.02) map.setZoom(_dirZoom);
+    } else {
+      camNominalZoom = _dirZoom;
+    }
   }
-  _dirSetZoom = map.getZoom();   // frame-end zoom: the next frame compares
+  _dirSetZoom = _dirZoom;        // frame-end nominal: next frame compares
   const p = map.getPitch();
   if (Math.abs(pitchTarget - p) > 0.1) {
     map.setPitch(p + (pitchTarget - p) * Math.min(1, dtMs / 1200));
@@ -8249,6 +8279,7 @@ function loadFlight(newFixes, filename, opts) {
   _dirPhase = 'glide'; _dirCandidate = null;   // Director state belongs to
   _dirLastMs = -1; _dirFitCam = null;          //   the previous flight too
   _dirZoomOverride = null; _dirSetZoom = null; _dirLastSeg = null;
+  _dirZoom = null; camNominalZoom = null; _camLastApplied = null;
   dirShots = [];                               // shots too (like the A-B loop)
   if (window._refreshShotUi) window._refreshShotUi();
   updateLoopBand();
