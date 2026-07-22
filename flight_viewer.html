@@ -4653,9 +4653,39 @@ function pilotMpp(raw) {
   return raw * Math.min(1, Math.max(0.55, raw / PILOT_MAX_MPP));
 }
 
+// Metres-per-pixel AT THE PILOT'S 3-D POSITION, giving the marker a
+// CONSTANT on-screen size regardless of the applied zoom. The old sizing
+// used mPerPx(groundZoom): fine when the applied zoom tracked the framing,
+// but the drone-follow camera now varies the applied zoom widely to hold
+// distance-to-pilot over terrain, so a ground-zoom marker ballooned or
+// shrank (a short low flight rendered the pilot half the size of the same
+// pilot on a big XC). Sizing off the true projected scale at the pilot
+// pins the marker's screen size. SCREEN_REF (~ demo's ground-zoom scale)
+// keeps the calibrated look; the sizes below stay in their tuned range.
+const PILOT_SCREEN_REF = 3.2;
+function pilotMarkerMpp(pos) {
+  const dk = overlay && overlay._deck;
+  const vp = dk && dk.viewManager && dk.viewManager.getViewports()[0];
+  if (vp && vp.project && pos) {
+    try {
+      const mLat = 111320, mLon = 111320 * Math.cos(pos[1] * Math.PI / 180) || 1;
+      const a  = vp.project([pos[0], pos[1], pos[2]]);
+      const bN = vp.project([pos[0], pos[1] + 1 / mLat, pos[2]]);
+      const bE = vp.project([pos[0] + 1 / mLon, pos[1], pos[2]]);
+      if (a && bN && bE) {
+        const pxPerM = (Math.hypot(bN[0] - a[0], bN[1] - a[1])
+                      + Math.hypot(bE[0] - a[0], bE[1] - a[1])) / 2;
+        if (isFinite(pxPerM) && pxPerM > 1e-4)
+          return PILOT_SCREEN_REF / pxPerM;
+      }
+    } catch (_) { /* fall through to ground scale */ }
+  }
+  return pilotMpp(map ? mPerPx(pos[1], map.getZoom()) : 1);
+}
+
 function buildPilotLayers(pos, headingDeg) {
   const s   = state.pilotSize;
-  const mpp = pilotMpp(map ? mPerPx(pos[1], map.getZoom()) : 1);
+  const mpp = pilotMarkerMpp(pos);
 
   if (state.pilotShape === 'cylinder') {
     // True 3-D marker: white inner body + magenta outer band + red wedge.
@@ -7826,13 +7856,26 @@ function centerOnPilotFrame(pos, dtMs) {
     const ctcdM = ctcdPx * mPerPx(lat_p, zA);
     cLng = eLng + ctcdM * sinP * fwdX / mLon;
     cLat = eLat + ctcdM * sinP * fwdY / mLat;
-    let elev = 0;
-    try { elev = map.queryTerrainElevation([cLng, cLat]) || 0; } catch (_) {}
+    // Terrain under the look-at point -- from OUR DEM pipeline (absolute
+    // display metres, same units as alt_p; the chart has always used it).
+    // MapLibre's queryTerrainElevation is a trap here: in v4 it returns
+    // elevation RELATIVE to the current centre (≈0 at the centre itself),
+    // so using it made the camera believe every site sat at sea level;
+    // on big flights the slow trim silently absorbed the error, on short
+    // low flights it shoved the pilot clean off centre. The ground under
+    // the pilot stands in for the ground under the look-at point -- the
+    // difference is second-order and the trim handles it.
+    let elev = groundDisplayAt(state.currentMs);
+    if (elev == null || !isFinite(elev)) elev = Math.max(0, alt_p - 400);
     const hz = Math.max(20, eyeZ - elev);       // eye height above centre elev
     const ctcdNeeded = hz / cosP;
     zA = Math.log2(ctcdPx * 156543.03 * Math.cos(latR) / ctcdNeeded);
   }
-  zA = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), zA));
+  // Safety ceiling: the drone should never frame closer than z18 (street
+  // level). A pathological solve there would drop the eye onto the terrain
+  // and render black -- which a manual zoom-out used to be needed to
+  // escape. 18 is well beyond any phase / nominal framing.
+  zA = Math.max(map.getMinZoom(), Math.min(18, map.getMaxZoom(), zA));
 
   // Slow integral trim: measure the pilot's vertical screen error with
   // the renderer's own projection and integrate it into a metre offset
@@ -7954,11 +7997,26 @@ function dirZoomAdjust() {
   const m = Math.min(window.innerWidth || 1000, window.innerHeight || 1000);
   return Math.max(-1.6, Math.min(0, Math.log2(m / 1000)));
 }
+// Track-scale pull-in. The phase zooms are tuned on multi-km XC flights;
+// with the drone camera their meaning is "distance to the pilot", so a
+// short ridge soar spanning a few hundred metres would be filmed from
+// kilometres away -- an unreadable speck. Shrink the framing distance
+// with the track's bounding-box diagonal: >=8 km untouched (the demo
+// XC's local-triangle box is ~7 km and must not change), small sites
+// pull in by up to 3 zoom levels (1/8 the distance).
+function dirTrackAdjust() {
+  if (!(lonMax > lonMin) || N === 0) return 0;
+  const midLat = (latMin + latMax) / 2;
+  const diag = Math.hypot(
+    (lonMax - lonMin) * 111320 * Math.cos(midLat * Math.PI / 180),
+    (latMax - latMin) * 111320);
+  return Math.max(0, Math.min(3, Math.log2(8000 / Math.max(500, diag))));
+}
 function dirZoomFor(phase) {
   const z = phase === 'intro' ? state.dirZoomIntro
           : phase === 'thermal' ? state.dirZoomThermal
           : phase === 'glide' ? state.dirZoomGlide : null;   // finale: auto fit
-  return z == null ? null : z + dirZoomAdjust();
+  return z == null ? null : z + dirZoomAdjust() + dirTrackAdjust();
 }
 function dirPitchFor(phase) {
   return phase === 'intro' ? state.dirPitchIntro
@@ -7988,8 +8046,13 @@ let _dirLastSeg = null;
 // once stale, so the choreography returns on the next natural cut.
 const DIR_ZOOM_HOLD_MS = 45000;
 function directorPhaseFor(ms) {
-  if ((T1 - ms) / 1000 < state.dirFinaleSec) return 'finale';
-  if ((ms - T0) / 1000 < state.dirIntroSec) return 'intro';
+  // Short flights: scale the bookend phases down so a 4-minute soar isn't
+  // one third intro + finale (finale <=20% of the flight, intro <=8%).
+  const durS = Math.max(1, (T1 - T0) / 1000);
+  const finS = Math.min(state.dirFinaleSec, durS * 0.20);
+  const intS = Math.min(state.dirIntroSec, durS * 0.08);
+  if ((T1 - ms) / 1000 < finS) return 'finale';
+  if ((ms - T0) / 1000 < intS) return 'intro';
   return directorThermalAt(ms) ? 'thermal' : 'glide';
 }
 
@@ -8087,7 +8150,8 @@ function directorCamFrame(headingDeg, dtMs) {
   let zoomTarget, pitchTarget;
   if (shot) {
     // User-pinned shot overrides the automatic phase for this range.
-    zoomTarget = shot.zoom + dirZoomAdjust(); pitchTarget = shot.pitch;
+    zoomTarget = shot.zoom + dirZoomAdjust() + dirTrackAdjust();
+    pitchTarget = shot.pitch;
     if (shot.mode === 'orbit') {
       map.setBearing(map.getBearing()
         + Math.max(3, state.orbitSpeedDeg) * dtMs / 1000);
@@ -8280,6 +8344,7 @@ function loadFlight(newFixes, filename, opts) {
   _dirLastMs = -1; _dirFitCam = null;          //   the previous flight too
   _dirZoomOverride = null; _dirSetZoom = null; _dirLastSeg = null;
   _dirZoom = null; camNominalZoom = null; _camLastApplied = null;
+  _camTrim = 0;
   dirShots = [];                               // shots too (like the A-B loop)
   if (window._refreshShotUi) window._refreshShotUi();
   updateLoopBand();
@@ -8332,11 +8397,14 @@ function loadFlight(newFixes, filename, opts) {
                  : diagM < 8000 ? 0.45
                  : diagM < 25000 ? 0.3 : 0.15;
     fitTrack(0, 0, { padding: 48, zoomIn });
-    // Absolute closeness floor for the OPENING shot: tiny local tracks
-    // otherwise fit at street-level zoom, which reads as violent motion
-    // at playback speed and dwarfs the terrain. ~2.4 m/px keeps a calm
-    // several-hundred-metre-wide frame; users can always zoom in.
-    if (map.getZoom() > 15.2) map.setZoom(15.2, { animate: false });
+    // Closeness ceiling for the OPENING shot, scaled by track size. For
+    // multi-km XC flights ~2.4 m/px (z15.2) keeps a calm establishing
+    // frame; but a short local soar spanning a few hundred metres would
+    // be an unreadable speck at that zoom, so small tracks may open up
+    // to two levels closer -- still wide enough to read calmly.
+    const zCap = Math.min(17.2,
+      15.2 + Math.max(0, Math.log2(8000 / Math.max(500, diagM))));
+    if (map.getZoom() > zCap) map.setZoom(zCap, { animate: false });
     requestAnimationFrame(() => {
       if (!map) return;
       // Slow cinematic tilt-in; follow takes over only after the ease
@@ -8799,7 +8867,7 @@ function buildCmpLayers() {
     if (!pos) return;
     const head = cmpHeadingAt(tr, ms);
     const s = state.pilotSize;
-    const mpp = pilotMpp(mPerPx(pos[1], zoom));
+    const mpp = pilotMarkerMpp(pos);   // constant screen size (see above)
     const r = 6 * s * mpp;
     const circle = pilotPolygon(pos[0], pos[1], pos[2], head, discXY(r, 24));
     const tri = pilotPolygon(pos[0], pos[1], pos[2], head, [
