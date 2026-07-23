@@ -4691,7 +4691,14 @@ function pilotMpp(raw) {
 // pilot on a big XC). Sizing off the true projected scale at the pilot
 // pins the marker's screen size. SCREEN_REF (~ demo's ground-zoom scale)
 // keeps the calibrated look; the sizes below stay in their tuned range.
+// The constant-pixel marker is a much larger FRACTION of a phone's small
+// screen than a desktop's, so it reads as oversized there -- scale the
+// reference down on narrow viewports (desktop / tablet unchanged).
 const PILOT_SCREEN_REF = 3.2;
+function pilotScreenRef() {
+  const m = Math.min(window.innerWidth || 1400, window.innerHeight || 800);
+  return PILOT_SCREEN_REF * Math.min(1, Math.max(0.5, m / 700));
+}
 function pilotMarkerMpp(pos) {
   const dk = overlay && overlay._deck;
   const vp = dk && dk.viewManager && dk.viewManager.getViewports()[0];
@@ -4705,7 +4712,7 @@ function pilotMarkerMpp(pos) {
         const pxPerM = (Math.hypot(bN[0] - a[0], bN[1] - a[1])
                       + Math.hypot(bE[0] - a[0], bE[1] - a[1])) / 2;
         if (isFinite(pxPerM) && pxPerM > 1e-4)
-          return PILOT_SCREEN_REF / pxPerM;
+          return pilotScreenRef() / pxPerM;
       }
     } catch (_) { /* fall through to ground scale */ }
   }
