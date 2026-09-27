@@ -967,6 +967,10 @@
         <div class="sec" data-sec="basics"><span class="chev">&#x25BE;</span><span>Basics</span></div>
         <div class="secBody" data-secbody="basics">
         <div class="row">
+          <span class="lbl" title="Place names on the map: cities, towns, villages, mountain peaks (with elevation) and lakes, from OpenStreetMap via OpenFreeMap. Labels stay upright and readable in tilted 3D views, on both basemaps and in explore-map mode.">Map labels</span>
+          <div class="ctl"><input type="checkbox" id="mapLabelsCb" checked></div>
+        </div>
+        <div class="row">
           <span class="lbl">Altitude source</span>
           <div class="ctl">
             <div class="toggle" id="altSrc">
@@ -2565,7 +2569,7 @@ function parseFlightFile(text, filename) {
 // corrupt / stale blob can never wedge the app.
 const PREFS_STORAGE_KEY = 'fv_prefs_v1';
 const PERSIST_KEYS = [
-  'altSrc', 'base', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown',
+  'altSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown',
   'exag', 'trackWidth', 'tube3d', 'smoothSubdiv', 'smoothTension',
   'kmlRateHz', 'spiralReconOn', 'spiralMode', 'spiralTurnsPerSec',
   'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed',
@@ -2611,6 +2615,7 @@ let renderDirty = true;
 const rawState = {
   altSrc: 'gps',
   base: 'sat',
+  mapLabels: true,      // place-name labels (cities, peaks, lakes) on the map
   units: 'metric',
   colorMode: 'vario',   // 'vario' | 'single'
   varioMaxUp: 2,        // m/s -- saturates red at this climb rate
@@ -3175,6 +3180,11 @@ function offlineKeyForUrl(url) {
   // with (other filter combinations simply fall through to the network).
   m = url.match(/thermal\.kk7\.ch\/tiles\/wmts\/([a-z0-9_]+)\/(\d+)\/(\d+)\/(\d+)\.png/);
   if (m) return `kk7/${m[1]}/${m[2]}/${m[3]}/${m[4]}`;
+  // OpenFreeMap label vector tiles. The path carries a build version that
+  // changes every few weeks -- drop it so cached / packed tiles keep
+  // answering after the version rolls over.
+  m = url.match(/tiles\.openfreemap\.org\/planet\/[^/]+\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+  if (m) return `lbl/${m[1]}/${m[2]}/${m[3]}`;
   return null;
 }
 // ---------------------------------------------------------------------------
@@ -3328,7 +3338,7 @@ async function tcTotalBytes() {
 function tileCacheKeyFor(url) {
   const k = offlineKeyForUrl(url);
   if (k) return k;
-  let m = url.match(/demotiles\.maplibre\.org\/font\/([^?]+)/);
+  let m = url.match(/tiles\.openfreemap\.org\/fonts\/([^?]+)/);
   if (m) return 'glyph/' + m[1];
   m = url.match(/api\.tiles\.openaip\.net\/api\/data\/openaip\/(\d+)\/(\d+)\/(\d+)\.png/);
   if (m) return `oaip/${m[1]}/${m[2]}/${m[3]}`;
@@ -3381,7 +3391,7 @@ function transformTileRequest(url) {
 // left raster sources permanently empty -- so it is deliberately avoided.)
 function reloadMapStyle() {
   if (!map) return;
-  for (const id of ['sat', 'osm', 'terrarium', 'kk7-thermals', 'kk7-skyways']) {
+  for (const id of ['sat', 'osm', 'terrarium', 'kk7-thermals', 'kk7-skyways', 'labels']) {
     const src = map.getSource(id);
     if (src && src.setTiles && src.tiles) {
       try { src.setTiles(src.tiles.slice()); }
@@ -3431,6 +3441,9 @@ async function buildOfflineMap() {
   const kk7Kinds = [];
   if (state.kk7Show && state.kk7Thermals) kk7Kinds.push('thermals');
   if (state.kk7Show && state.kk7Skyways) kk7Kinds.push('skyways');
+  // Place-name label tiles ride along when labels are on (small .pbf files;
+  // MapLibre overzooms z14 for anything closer).
+  const labelsTpl = state.mapLabels ? await labelsTileTemplate() : null;
 
   // Basemap zoom ceiling auto-reduces to stay under the tile cap.
   let baseMax = 16;
@@ -3438,6 +3451,9 @@ async function buildOfflineMap() {
     let n = 0;
     for (let z = 8; z <= max; z++) n += tileRangeForBounds(z, west, south, east, north).count;
     for (let z = 8; z <= DEM_MAX; z++) n += tileRangeForBounds(z, west, south, east, north).count;
+    if (labelsTpl)
+      for (let z = 8; z <= LABELS_MAXZOOM; z++)
+        n += tileRangeForBounds(z, west, south, east, north).count;
     for (const kind of kk7Kinds)
       for (let z = 8; z <= KK7_MAXZOOM[kind]; z++)
         n += tileRangeForBounds(z, west, south, east, north).count;
@@ -3462,6 +3478,11 @@ async function buildOfflineMap() {
     const urlOf = (z, x, y) =>
       tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
     for (let z = 8; z <= KK7_MAXZOOM[kind]; z++) addLevel('kk7', z, urlOf);
+  }
+  if (labelsTpl) {
+    const urlOf = (z, x, y) =>
+      labelsTpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    for (let z = 8; z <= LABELS_MAXZOOM; z++) addLevel('lbl', z, urlOf);
   }
 
   const total = jobs.length;
@@ -3738,8 +3759,9 @@ let pendingApply = null;
 function buildMapStyle() {
   return {
     version: 8,
-    // Glyphs are only needed by the sites' name labels (symbol layer).
-    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    // Glyphs for the place-name labels and the sites' name labels. CJK
+    // text is drawn from the system font (MapLibre's localIdeographFontFamily).
+    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
     sources: {
       'sat': { type: 'raster', tiles: ['https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
                tileSize: 256, maxzoom: 19, attribution: 'Tiles \u00a9 Esri' },
@@ -3807,7 +3829,7 @@ function applyKk7Layers() {
           layout: { visibility: 'none' },
           paint: { 'raster-fade-duration': 0,
                    'raster-opacity': state.kk7Opacity },
-        });
+        }, labelsBeforeId());
         _appliedTileUrl[id] = url;
       } else if (_appliedTileUrl[id] !== url) {
         src.setTiles([url]);        // season / time-of-day filter changed
@@ -3847,7 +3869,7 @@ function applyOpenAipLayer() {
         id, type: 'raster', source: id,
         layout: { visibility: 'none' },
         paint: { 'raster-fade-duration': 0 },
-      });
+      }, labelsBeforeId());
       _appliedTileUrl[id] = url;
     } else if (_appliedTileUrl[id] !== url) {
       src.setTiles([url]);
@@ -3856,6 +3878,137 @@ function applyOpenAipLayer() {
     map.setLayoutProperty(id, 'visibility',
       state.openaipShow ? 'visible' : 'none');
   } catch (e) { console.warn('openAIP overlay failed:', e); }
+  renderDirty = true;
+}
+
+// ---------------------------------------------------------------------------
+// Place-name labels -- cities, towns, villages, mountain peaks (with
+// elevation) and lakes from OpenFreeMap's free OpenMapTiles vector tiles.
+// Symbol layers stay upright and screen-aligned in tilted 3D views, where
+// the text baked into raster basemaps smears across the terrain.
+// The tile URL carries a build version, so it comes from the TileJSON; the
+// last known template is kept in localStorage for offline sessions.
+// ---------------------------------------------------------------------------
+const LABELS_TILEJSON = 'https://tiles.openfreemap.org/planet';
+const LABELS_TPL_KEY = 'fv_labels_tpl';
+const LABELS_MAXZOOM = 14;
+// Bottom -> top. Higher layers win label collisions, so the most useful
+// orientation cues (cities, then peaks) sit above villages and lakes.
+const LABEL_LAYER_IDS = ['lbl-water', 'lbl-village', 'lbl-town',
+                         'lbl-peak', 'lbl-city', 'lbl-region'];
+let _labelsTpl = null;
+async function labelsTileTemplate() {
+  if (_labelsTpl) return _labelsTpl;
+  try {
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 6000);
+    const j = await (await fetch(LABELS_TILEJSON, { signal: ctl.signal })).json();
+    clearTimeout(to);
+    if (j && j.tiles && j.tiles[0]) {
+      _labelsTpl = j.tiles[0];
+      try { localStorage.setItem(LABELS_TPL_KEY, _labelsTpl); } catch (_) {}
+    }
+  } catch (_) { /* offline -- fall back below */ }
+  if (!_labelsTpl) {
+    try { _labelsTpl = localStorage.getItem(LABELS_TPL_KEY); } catch (_) {}
+  }
+  // Never been online: any version segment still resolves through the
+  // tile cache and .fvmap packs (offlineKeyForUrl ignores it).
+  return _labelsTpl
+    || 'https://tiles.openfreemap.org/planet/offline/{z}/{x}/{y}.pbf';
+}
+// Lowest map overlay layer that raster / fill overlays must stay beneath,
+// so text remains legible over kk7 heatmaps, openAIP and airspace fills.
+function labelsBeforeId() {
+  if (!map) return undefined;
+  for (const id of LABEL_LAYER_IDS) if (map.getLayer(id)) return id;
+  return map.getLayer('sites-fill') ? 'sites-fill' : undefined;
+}
+function peakTextField() {
+  const imp = state.units === 'imperial';
+  const eleKey = imp ? 'ele_ft' : 'ele';
+  return ['format',
+    '▲', { 'font-scale': 0.8, 'text-color': '#fcd34d' },
+    '\n', {},
+    ['get', 'name'], {},
+    ['case', ['has', eleKey],
+      ['concat', '\n', ['to-string', ['get', eleKey]], imp ? ' ft' : ' m'], ''],
+    { 'font-scale': 0.85, 'text-color': '#e5e7eb' }];
+}
+let _labelsAdding = false;
+async function applyMapLabels() {
+  if (!map || !mapReady) return;
+  if (!map.getSource('labels')) {
+    if (!state.mapLabels || _labelsAdding) return;  // created on first use
+    _labelsAdding = true;
+    let tpl;
+    try { tpl = await labelsTileTemplate(); } finally { _labelsAdding = false; }
+    if (map.getSource('labels')) return applyMapLabels();
+    try {
+      map.addSource('labels', {
+        type: 'vector', tiles: [tpl], maxzoom: LABELS_MAXZOOM,
+        attribution: '<a href="https://openfreemap.org">OpenFreeMap</a> '
+          + '© <a href="https://www.openmaptiles.org/">OpenMapTiles</a> '
+          + 'Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      });
+      // Under the user's launch/LZ sites (their labels win collisions),
+      // otherwise on top of the basemap / raster overlays.
+      const before = map.getLayer('sites-fill') ? 'sites-fill'
+        : (map.getStyle().layers.find(l => l.type === 'custom') || {}).id;
+      const name = ['coalesce', ['get', 'name'], ['get', 'name:latin']];
+      const halo = { 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.4 };
+      const place = cls => ['all', ['has', 'name'],
+        ['match', ['get', 'class'], cls, true, false]];
+      const defs = [
+        { id: 'lbl-water', 'source-layer': 'water_name', minzoom: 8,
+          filter: ['has', 'name'],
+          layout: { 'text-field': name, 'text-font': ['Noto Sans Italic'],
+                    'text-size': 11, 'text-max-width': 8 },
+          paint: { 'text-color': '#bfdbfe', ...halo } },
+        { id: 'lbl-village', 'source-layer': 'place', minzoom: 11,
+          filter: place(['village', 'hamlet']),
+          layout: { 'text-field': name, 'text-font': ['Noto Sans Regular'],
+                    'text-size': 11, 'text-max-width': 8 },
+          paint: { 'text-color': '#f3f4f6', ...halo } },
+        { id: 'lbl-town', 'source-layer': 'place', minzoom: 8,
+          filter: place(['town']),
+          layout: { 'text-field': name, 'text-font': ['Noto Sans Regular'],
+                    'text-size': ['interpolate', ['linear'], ['zoom'], 8, 11, 13, 14],
+                    'text-max-width': 8 },
+          paint: { 'text-color': '#ffffff', ...halo } },
+        { id: 'lbl-peak', 'source-layer': 'mountain_peak', minzoom: 8,
+          filter: ['all', ['has', 'name'],
+                   ['match', ['get', 'class'], ['peak', 'volcano'], true, false]],
+          layout: { 'text-field': peakTextField(), 'text-font': ['Noto Sans Regular'],
+                    'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, -0.55],
+                    'text-max-width': 9, 'symbol-sort-key': ['get', 'rank'] },
+          paint: { 'text-color': '#ffffff', ...halo } },
+        { id: 'lbl-city', 'source-layer': 'place', minzoom: 4,
+          filter: place(['city']),
+          layout: { 'text-field': name, 'text-font': ['Noto Sans Bold'],
+                    'text-size': ['interpolate', ['linear'], ['zoom'], 5, 12, 12, 17],
+                    'text-max-width': 8, 'symbol-sort-key': ['get', 'rank'] },
+          paint: { 'text-color': '#ffffff', ...halo } },
+        { id: 'lbl-region', 'source-layer': 'place', maxzoom: 9,
+          filter: place(['country', 'state']),
+          layout: { 'text-field': name, 'text-font': ['Noto Sans Bold'],
+                    'text-size': ['match', ['get', 'class'], 'country', 14, 12],
+                    'text-transform': 'uppercase', 'text-letter-spacing': 0.1,
+                    'text-max-width': 8 },
+          paint: { 'text-color': '#e5e7eb', ...halo } },
+      ];
+      for (const d of defs) {
+        d.type = 'symbol'; d.source = 'labels';
+        d.layout.visibility = 'none';
+        map.addLayer(d, before);
+      }
+    } catch (e) { console.warn('map labels failed:', e); return; }
+  }
+  try {
+    const vis = state.mapLabels ? 'visible' : 'none';
+    for (const id of LABEL_LAYER_IDS) map.setLayoutProperty(id, 'visibility', vis);
+    map.setLayoutProperty('lbl-peak', 'text-field', peakTextField());  // units
+  } catch (e) { console.warn('map labels failed:', e); }
   renderDirty = true;
 }
 
@@ -3915,7 +4068,7 @@ function applySitesLayer() {
                  'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
       map.addLayer({ id: 'sites-label', type: 'symbol', source: 'sites',
         layout: { 'text-field': ['get', 'name'],
-                  'text-font': ['Open Sans Semibold'], 'text-size': 12,
+                  'text-font': ['Noto Sans Bold'], 'text-size': 12,
                   'text-offset': [0, 1.1], 'text-anchor': 'top' },
         paint: { 'text-color': '#fff',
                  'text-halo-color': 'rgba(0,0,0,0.75)', 'text-halo-width': 1.2 } });
@@ -4050,6 +4203,7 @@ function initMap() {
     applyKk7Layers();
     applyOpenAipLayer();
     applySitesLayer();
+    applyMapLabels();
     configureMapZoom();
     if (window._wireMapGestures) window._wireMapGestures();
     if (pendingApply) { pendingApply(); pendingApply = null; }
@@ -5958,6 +6112,7 @@ function setupAppUi() {
   });
   initToggle('units',  'units',  () => {
     refreshChart();
+    applyMapLabels();     // peak elevations switch m <-> ft
     renderStatsPanel();   // stats values carry units; re-render live
   });
   initToggle('base',   'base',   () => {
@@ -6126,6 +6281,12 @@ function setupAppUi() {
     trackHoldV.textContent = fmtMS(state.trackHoldSec);
   });
   trackHoldV.textContent = fmtMS(state.trackHoldSec);
+
+  const mapLabelsCb = document.getElementById('mapLabelsCb');
+  mapLabelsCb.checked = state.mapLabels;
+  mapLabelsCb.addEventListener('change', e => {
+    state.mapLabels = e.target.checked; applyMapLabels();
+  });
 
   // ---------- thermal.kk7.ch overlay controls ----------
   const kk7ShowCb = document.getElementById('kk7ShowCb');
@@ -6919,7 +7080,7 @@ function setupAppUi() {
         ['trackFadeCb', 'trackFadeOn'], ['curtainFadeCb', 'curtainFadeOn'],
         ['kk7ShowCb', 'kk7Show'], ['kk7ThermalsCb', 'kk7Thermals'],
         ['kk7SkywaysCb', 'kk7Skyways'], ['openaipShowCb', 'openaipShow'],
-        ['tileCacheCb', 'tileCacheOn']]) {
+        ['tileCacheCb', 'tileCacheOn'], ['mapLabelsCb', 'mapLabels']]) {
       const cb = document.getElementById(id);
       if (cb && cb.checked !== FACTORY_STATE[key]) {
         cb.checked = FACTORY_STATE[key];
@@ -9379,12 +9540,12 @@ function applyAirspaceToMap() {
     map.addLayer({
       id: 'airspace-fill', type: 'fill', source: 'airspace',
       paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.12 },
-    });
+    }, labelsBeforeId());
     map.addLayer({
       id: 'airspace-line', type: 'line', source: 'airspace',
       paint: { 'line-color': ['get', 'color'], 'line-width': 1.5,
                'line-opacity': 0.85 },
-    });
+    }, labelsBeforeId());
     if (!airspacePopupWired) {
       airspacePopupWired = true;
       map.on('click', 'airspace-fill', e => {
