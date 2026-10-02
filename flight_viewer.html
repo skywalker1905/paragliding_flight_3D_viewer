@@ -929,13 +929,23 @@
     </div>
   </div>
 </div>
-<!-- MIME types listed alongside extensions: iOS file pickers grey out
-     extension-only accept lists for unregistered types like .igc. -->
+<!-- accept= filters the desktop pickers. iOS matches it against system
+     file types (UTIs), not extensions: .igc / .openair only have a UTI
+     when an app that registers them (XCTrack, SeeYou, ...) is installed,
+     otherwise the files show greyed out. iOS drops the filter (below) and
+     relies on loadFile()'s own "Unsupported or empty file" check. -->
 <input type="file" id="fileInput"
        accept=".igc,.gpx,.kml,.fvmap,.IGC,.GPX,.KML,.FVMAP,application/vnd.google-earth.kml+xml,application/gpx+xml,application/json,text/plain">
 <input type="file" id="cmpFileInput" multiple style="display:none"
        accept=".igc,.gpx,.kml,.IGC,.GPX,.KML,application/vnd.google-earth.kml+xml,application/gpx+xml,text/plain">
 <input type="file" id="airspaceFileInput" style="display:none" accept=".txt,.openair,text/plain">
+<script>
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+    for (const id of ['fileInput', 'cmpFileInput', 'airspaceFileInput'])
+      document.getElementById(id).removeAttribute('accept');
+  }
+</script>
 
 <!-- ============================================================ -->
 <!-- Map app (hidden until a flight is loaded)                      -->
