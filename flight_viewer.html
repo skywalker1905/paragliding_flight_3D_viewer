@@ -1909,6 +1909,32 @@ function decodeTerrariumPixel(imageData, px, py) {
   return (d[i] * 256 + d[i + 1] + d[i + 2] / 256) - 32768;
 }
 
+// Synchronous terrain lookup for the follow camera's terrain clearance,
+// in display metres (x exaggeration). Reads decoded Terrarium tiles at
+// z12 (~30 m/px); a tile not yet decoded returns null and is fetched in
+// the background. Independent of what MapLibre has loaded -- the terrain
+// BEHIND the camera, where the eye can sink into a ridge, is never in
+// view and so never loaded by the renderer.
+const CAM_DEM_ZOOM = 12;
+const terrariumData = new Map();   // "z/x/y" -> ImageData | null (resolved)
+function demDisplayAtSync(lon, lat) {
+  const z = CAM_DEM_ZOOM;
+  const { tx, ty, px, py } = lonLatToTilePixel(lon, lat, z);
+  const key = z + '/' + tx + '/' + ty;
+  const d = terrariumData.get(key);
+  if (d === undefined) {
+    terrariumData.set(key, null);              // in flight
+    fetchTerrariumTile(z, tx, ty).then(img => terrariumData.set(key, img || null));
+    return null;
+  }
+  if (!d) return null;
+  // Max of the 2x2 neighbourhood: clearance should err high on ridges.
+  const x1 = Math.min(255, px + 1), y1 = Math.min(255, py + 1);
+  const h = Math.max(decodeTerrariumPixel(d, px, py), decodeTerrariumPixel(d, x1, py),
+                     decodeTerrariumPixel(d, px, y1), decodeTerrariumPixel(d, x1, y1));
+  return h * state.exag;
+}
+
 // Async; fire-and-forget. Refreshes the chart progressively as each
 // tile arrives (debounced via requestAnimationFrame) and once more at
 // the end. Safe to call repeatedly -- the loading flag prevents
@@ -4198,6 +4224,10 @@ function initMap() {
         if (cb) cb.checked = state.kk7Show;
       } },
   ]), 'top-right');
+
+  // Free-camera mode too: no animated move may leave the terrain height
+  // under the centre frozen (see releaseStuckElevationFreeze).
+  map.on('moveend', () => setTimeout(releaseStuckElevationFreeze, 0));
 
   map.on('load', () => {
     overlay = new deck.MapboxOverlay({ interleaved: true, layers: [] });
@@ -7989,14 +8019,28 @@ function centerOnPilot() {
 // point changes as the bearing orbits, dragging the eye with it).
 //
 // So each frame we do the drone math first and then SOLVE for the
-// (center, zoom) MapLibre needs to realise that eye pose, explicitly
-// cancelling the terrain height out of the equations:
+// (center, zoom) MapLibre needs to realise that eye pose:
 //
 //   view    = ( sinP·sinB, sinP·cosB, -cosP )        pitch P, bearing B
 //   eye     = pilot - D·view                          D from nominal zoom
-//   ctcd(z) = ctcdPx · mPerPx(lat, z)                 eye→centre distance
-//   centre  = eye_xy + ctcd(z)·sinP·(sinB, cosB)
-//   elev(centre) + ctcd(z)·cosP = eye_z               → solve z
+//   centre  = first point where the ray eye + s·view meets MapLibre's
+//             terrain;  ctcd(z) = s  -> solve z
+//
+// MapLibre renders the eye at elev(centre) + ctcd·cosP above the centre,
+// so the centre has to be where the view ray really meets the terrain it
+// uses. (An earlier version assumed the ground under the look-at point
+// was as high as the ground under the pilot. Flying along a mountain
+// face with a near-horizontal view, the look-at point sits kilometres out
+// over a valley ~1000 m lower, and the real eye dropped by that much --
+// straight into the mountain behind the pilot.) Every point on the ray
+// renders the same image, so the solve has no feedback: the smoothing
+// lives on the eye, not on centre/zoom.
+//
+// Terrain clearance ("spring arm", as in game cameras): the eye-to-pilot
+// segment is checked against the DEM; if a ridge cuts it, the arm
+// shortens so the eye stays in front of the ridge, and eases back out
+// once clear. A pilot on or near the ground (eye still too low at the
+// shortest arm) lifts the eye straight up instead.
 //
 // The nominal zoom (what Director tuning and the user's wheel express)
 // now means "distance to the PILOT", not "scale at the ground": with the
@@ -8015,8 +8059,48 @@ let _camTrim = 0;               // slow integral trim (m): absorbs the small
                                 //   ~1 s -- far too slow to interact with
                                 //   the per-frame dynamics, so it cannot
                                 //   reintroduce the old feedback spiral.
+let _camEye = null;             // smoothed eye {lng, lat, z} (display m)
+let _camArm = 1;                // spring-arm length as a fraction of D
+const CAM_CLEARANCE = 60;       // eye clearance above terrain (display m)
+const CAM_ARM_MIN = 0.08;       // shortest arm, fraction of D
+const CAM_MAX_ZOOM = 20;        // closest applied framing (eye→centre ~150 m)
+// Metres per CSS pixel at MapLibre zoom z. MapLibre zooms are defined on
+// 512 px tiles -- half the 256-px-tile scale mPerPx() returns. The camera
+// solve once used mPerPx() here, so MapLibre put the eye at HALF the
+// intended height above the centre: the main reason the follow camera
+// sank into ridges as the view flattened.
+function mlMPerPx(lat, z) {
+  return 78271.517 * Math.cos(lat * Math.PI / 180) / Math.pow(2, z);
+}
+// MapLibre 4.7 bug workaround. easeTo / flyTo (and fitBounds, which runs
+// through flyTo) call _prepareElevation() whenever terrain is on, which
+// sets _elevationFreeze -- but only clear it at the end when the call
+// passed { freezeElevation: true }. None of ours do, so after the first
+// animated camera move MapLibre stopped tracking the terrain height under
+// the map centre for good: the camera was then drawn at the STALE
+// elevation + ctcd*cos(pitch). With a near-horizontal view the centre
+// runs kilometres away onto terrain hundreds of metres higher or lower
+// than the stale value, and the rendered eye ended up inside mountains.
+// Release the freeze once nothing is animating, exactly as MapLibre's own
+// _finalizeElevation does (it also recalculates zoom to hold the camera
+// height). Returns the zoom change so the follow camera can discount it.
+function releaseStuckElevationFreeze() {
+  if (!map || !map._elevationFreeze || !map.terrain) return 0;
+  if ((map.isEasing && map.isEasing())
+      || (map.handlers && map.handlers.isMoving && map.handlers.isMoving())) return 0;
+  const z0 = map.getZoom();
+  try {
+    if (typeof map._finalizeElevation === 'function') map._finalizeElevation();
+    else map._elevationFreeze = false;
+  } catch (_) { map._elevationFreeze = false; }
+  return map.getZoom() - z0;
+}
+
 function centerOnPilotFrame(pos, dtMs) {
   if (!map) return;
+  // Not wheel input: keep it out of the nominal-zoom absorption below.
+  const dzFreeze = releaseStuckElevationFreeze();
+  if (dzFreeze && _camLastApplied != null) _camLastApplied += dzFreeze;
   const lng_p = pos[0], lat_p = pos[1], alt_p = pos[2] || 0;
   const latR = lat_p * Math.PI / 180;
   const mLat = 111320;
@@ -8025,6 +8109,7 @@ function centerOnPilotFrame(pos, dtMs) {
   const B = map.getBearing() * Math.PI / 180;
   const sinP = Math.sin(P), cosP = Math.max(0.15, Math.cos(P));
   const fwdX = Math.sin(B), fwdY = Math.cos(B);
+  const dt = dtMs || 16.7;
 
   // Nominal zoom bookkeeping. Wheel / pinch between our frames shows up
   // as a zoom differing from what we last applied -- absorb the delta so
@@ -8035,9 +8120,9 @@ function centerOnPilotFrame(pos, dtMs) {
   // not snapped back).
   const now = performance.now();
   const zMap = map.getZoom();
+  const continuous = now - _camLastTs < 250;
   if (camNominalZoom == null || !isFinite(camNominalZoom)) camNominalZoom = zMap;
-  if (_camLastApplied != null
-      && (now - _camLastTs < 250 || lastUserCamMs > _camLastTs)) {
+  if (_camLastApplied != null && (continuous || lastUserCamMs > _camLastTs)) {
     const d = zMap - _camLastApplied;
     if (Math.abs(d) > 0.001) camNominalZoom += d;
   }
@@ -8049,77 +8134,142 @@ function centerOnPilotFrame(pos, dtMs) {
   const t = map.transform;
   const ctcdPx = (t && t.cameraToCenterDistance)
     || 1.5 * map.getContainer().clientHeight;
-  const D = ctcdPx * mPerPx(lat_p, camNominalZoom);   // eye→pilot metres
-  const eLng = lng_p - D * sinP * fwdX / mLon;        // eye is BEHIND the
-  const eLat = lat_p - D * sinP * fwdY / mLat;        //   pilot (minus view)
-  const eyeZ = alt_p + D * cosP;
+  const D = ctcdPx * mlMPerPx(lat_p, camNominalZoom); // eye→pilot metres
+  // Point on the arm at distance a (m) behind the pilot (minus view).
+  const armPt = a => [lng_p - (a * sinP * fwdX + _camTrim * fwdX) / mLon,
+                      lat_p - (a * sinP * fwdY + _camTrim * fwdY) / mLat,
+                      alt_p + a * cosP];
 
-  // Solve applied zoom so the eye lands at eyeZ given the terrain under
-  // the centre. elev() is a slow function of position -- two fixed-point
-  // iterations are ample.
-  let zA = camNominalZoom;
-  let cLng = lng_p, cLat = lat_p;
-  for (let i = 0; i < 2; i++) {
-    const ctcdM = ctcdPx * mPerPx(lat_p, zA);
-    cLng = eLng + ctcdM * sinP * fwdX / mLon;
-    cLat = eLat + ctcdM * sinP * fwdY / mLat;
-    // Terrain under the look-at point -- from OUR DEM pipeline (absolute
-    // display metres, same units as alt_p; the chart has always used it).
-    // MapLibre's queryTerrainElevation is a trap here: in v4 it returns
-    // elevation RELATIVE to the current centre (≈0 at the centre itself),
-    // so using it made the camera believe every site sat at sea level;
-    // on big flights the slow trim silently absorbed the error, on short
-    // low flights it shoved the pilot clean off centre. The ground under
-    // the pilot stands in for the ground under the look-at point -- the
-    // difference is second-order and the trim handles it.
+  // Spring arm: walk pilot -> full-length eye; the first sample that dips
+  // below terrain + clearance caps the arm just in front of it.
+  let armReq = 1, mPrev = null, fPrev = 0;
+  const g0 = demDisplayAtSync(lng_p, lat_p);
+  if (g0 != null) mPrev = alt_p - g0 - CAM_CLEARANCE;
+  for (let i = 1; i <= 12; i++) {
+    const f = i / 12;
+    const q = armPt(f * D);
+    const g = demDisplayAtSync(q[0], q[1]);
+    if (g == null) { mPrev = null; fPrev = f; continue; }
+    const m = q[2] - g - CAM_CLEARANCE;
+    if (m < 0) {
+      const fHit = (mPrev != null && mPrev > 0)
+        ? fPrev + (f - fPrev) * mPrev / (mPrev - m) : fPrev;
+      armReq = Math.max(CAM_ARM_MIN, fHit * 0.9);
+      break;
+    }
+    mPrev = m; fPrev = f;
+  }
+  // Pull in at once (never sit inside a ridge); ease back out slowly.
+  if (armReq < _camArm) _camArm = armReq;
+  else _camArm += (armReq - _camArm) * (1 - Math.exp(-dt / 800));
+
+  const target = armPt(_camArm * D);
+  // Last resort (pilot on / near the ground): lift the eye clear.
+  const gT = demDisplayAtSync(target[0], target[1]);
+  let lifted = gT != null && target[2] < gT + CAM_CLEARANCE;
+  if (lifted) target[2] = gT + CAM_CLEARANCE;
+
+  // Low-pass the EYE toward the drone solution (tau ~140 ms): continuous
+  // flight stays glassy, seeks become a smooth catch-up move. When follow
+  // resumes after a gap, start from where MapLibre's camera really is.
+  if (!_camEye || !continuous) {
+    let start = null;
+    try {
+      const cp = t.getCameraPosition();
+      if (cp && isFinite(cp.altitude)) start = { lng: cp.lngLat.lng, lat: cp.lngLat.lat, z: cp.altitude };
+    } catch (_) {}
+    _camEye = start || { lng: target[0], lat: target[1], z: target[2] };
+  }
+  const k = 1 - Math.exp(-dt / 140);
+  _camEye.lng += (target[0] - _camEye.lng) * k;
+  _camEye.lat += (target[1] - _camEye.lat) * k;
+  _camEye.z   += (target[2] - _camEye.z) * k;
+  // Hard floor on the smoothed eye too: smoothing lag must not clip.
+  const gE = demDisplayAtSync(_camEye.lng, _camEye.lat);
+  if (gE != null && _camEye.z < gE + CAM_CLEARANCE) {
+    _camEye.z = gE + CAM_CLEARANCE;
+    lifted = true;
+  }
+  const eLng = _camEye.lng, eLat = _camEye.lat, eyeZ = _camEye.z;
+
+  // Centre = where the view ray from the eye meets MapLibre's own terrain
+  // (the elevation it will render the centre at). March outward with
+  // growing steps, then bisect. No terrain: fall back to the ground under
+  // the pilot as the centre height.
+  const terr = map.terrain;
+  const LngLat = maplibregl.LngLat;
+  const rayPt = s => [eLng + s * sinP * fwdX / mLon, eLat + s * sinP * fwdY / mLat,
+                      eyeZ - s * cosP];
+  let sHit;
+  if (terr && t) {
+    const elevAt = (lng, lat) => {
+      try { return terr.getElevationForLngLatZoom(new LngLat(lng, lat), t.tileZoom); }
+      catch (_) { return 0; }
+    };
+    let s0 = 0, step = 10, s1 = null;
+    for (let i = 0; i < 100; i++) {
+      const s = s0 + step;
+      const r = rayPt(s);
+      if (r[2] <= elevAt(r[0], r[1])) { s1 = s; break; }
+      s0 = s; step *= 1.08;
+      if (r[2] < -1000) break;                  // far below any terrain
+    }
+    if (s1 == null) sHit = s0;
+    else {
+      for (let i = 0; i < 10; i++) {
+        const sm = (s0 + s1) / 2, r = rayPt(sm);
+        if (r[2] <= elevAt(r[0], r[1])) s1 = sm; else s0 = sm;
+      }
+      sHit = (s0 + s1) / 2;
+    }
+  } else {
     let elev = groundDisplayAt(state.currentMs);
     if (elev == null || !isFinite(elev)) elev = Math.max(0, alt_p - 400);
-    const hz = Math.max(20, eyeZ - elev);       // eye height above centre elev
-    const ctcdNeeded = hz / cosP;
-    zA = Math.log2(ctcdPx * 156543.03 * Math.cos(latR) / ctcdNeeded);
+    sHit = Math.max(20, eyeZ - elev) / cosP;
   }
-  // Safety ceiling: the drone should never frame closer than z18 (street
-  // level). A pathological solve there would drop the eye onto the terrain
-  // and render black -- which a manual zoom-out used to be needed to
-  // escape. 18 is well beyond any phase / nominal framing.
-  zA = Math.max(map.getMinZoom(), Math.min(18, map.getMaxZoom(), zA));
+  let cLng = rayPt(sHit)[0], cLat = rayPt(sHit)[1];
+  const latC = cLat * Math.PI / 180;
+  let zA = Math.log2(ctcdPx * 78271.517 * Math.cos(latC) / Math.max(1, sHit));
+  // Zoom ceiling: terrain right in front of the eye would ask for an
+  // absurd zoom. Keep the eye where it is and put the centre further
+  // along the ray (inside the slope); MapLibre then raises the eye by
+  // the slope height -- the safe direction.
+  const zCap = Math.min(CAM_MAX_ZOOM, map.getMaxZoom());
+  if (!(zA <= zCap)) {
+    zA = zCap;
+    const sCap = ctcdPx * mlMPerPx(cLat, zCap);
+    cLng = rayPt(sCap)[0]; cLat = rayPt(sCap)[1];
+  }
+  zA = Math.max(map.getMinZoom(), zA);
 
   // Slow integral trim: measure the pilot's vertical screen error with
   // the renderer's own projection and integrate it into a metre offset
-  // along the bearing. This nulls the ~10% model mismatch so the pilot
-  // sits exactly on centre; the 900 ms time constant keeps it out of the
-  // fast dynamics entirely.
+  // along the bearing (applied to the eye via armPt). Pilot below centre
+  // => pull the eye back. Frozen while the eye is lifted -- the pilot is
+  // deliberately below centre then and the trim would only wind up.
   const dk = overlay && overlay._deck;
   const vp = dk && dk.viewManager && dk.viewManager.getViewports()[0];
-  if (vp && vp.project) {
+  if (!lifted && vp && vp.project) {
     try {
-      const s = vp.project([lng_p, lat_p, alt_p]);
+      const sc = vp.project([lng_p, lat_p, alt_p]);
       const cyc = map.getContainer().clientHeight / 2;
-      if (s && isFinite(s[1])) {
-        const kT = 1 - Math.exp(-(dtMs || 16.7) / 900);
-        _camTrim += (s[1] - cyc) * mPerPx(lat_p, zMap) * kT;
+      if (sc && isFinite(sc[1])) {
+        const kT = 1 - Math.exp(-dt / 900);
+        _camTrim += (sc[1] - cyc) * mlMPerPx(lat_p, zMap) * kT;
         const cap = 0.6 * D + 200;
         _camTrim = Math.max(-cap, Math.min(cap, _camTrim));
       }
     } catch (_) { /* keep current trim */ }
   }
-  // Pilot below centre => look-at sits too far ahead => pull it back.
-  const cLng2 = cLng - _camTrim * fwdX / mLon;
-  const cLat2 = cLat - _camTrim * fwdY / mLat;
 
-  // Low-pass centre and zoom toward the drone solution (tau ~140 ms):
-  // continuous flight stays glassy, seeks become a smooth catch-up move.
-  const k = 1 - Math.exp(-(dtMs || 16.7) / 140);
-  const c0 = map.getCenter();
-  const newLng = c0.lng + (cLng2 - c0.lng) * k;
-  const newLat = c0.lat + (cLat2 - c0.lat) * k;
-  const newZoom = zMap + (zA - zMap) * k;
-  if (isFinite(newLng) && isFinite(newLat) && isFinite(newZoom)
-      && Math.abs(newLat) < 85) {
+  if (isFinite(cLng) && isFinite(cLat) && isFinite(zA) && Math.abs(cLat) < 85) {
     suppressMoveDirty = true;
-    map.jumpTo({ center: [newLng, newLat], zoom: newZoom });
+    map.jumpTo({ center: [cLng, cLat], zoom: zA });
     suppressMoveDirty = false;
-    _camLastApplied = newZoom;
+    // What MapLibre actually applied (it may nudge zoom, e.g. lifting a
+    // camera it judges inside terrain) -- so only real wheel / pinch
+    // input reads as a zoom change next frame.
+    _camLastApplied = map.getZoom();
   }
 }
 // True while a custom pan/orbit pointer-drag is in flight (state lives in
@@ -8551,7 +8701,7 @@ function loadFlight(newFixes, filename, opts) {
   _dirLastMs = -1; _dirFitCam = null;          //   the previous flight too
   _dirZoomOverride = null; _dirSetZoom = null; _dirLastSeg = null;
   _dirZoom = null; camNominalZoom = null; _camLastApplied = null;
-  _camTrim = 0;
+  _camTrim = 0; _camEye = null; _camArm = 1;
   dirShots = [];                               // shots too (like the A-B loop)
   if (window._refreshShotUi) window._refreshShotUi();
   updateLoopBand();
