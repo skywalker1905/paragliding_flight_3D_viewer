@@ -3928,10 +3928,12 @@ function applyOpenAipLayer() {
 const LABELS_TILEJSON = 'https://tiles.openfreemap.org/planet';
 const LABELS_TPL_KEY = 'fv_labels_tpl';
 const LABELS_MAXZOOM = 14;
-// Bottom -> top. Higher layers win label collisions, so the most useful
-// orientation cues (cities, then peaks) sit above villages and lakes.
-const LABEL_LAYER_IDS = ['lbl-water', 'lbl-village', 'lbl-town',
-                         'lbl-peak', 'lbl-city', 'lbl-region'];
+// Bottom -> top. Higher layers win label collisions. Settlements sit above
+// peaks: in a range like the Sierra the dense peak labels otherwise crowd
+// out every town. (Small US towns -- Lone Pine, Independence -- are OSM
+// "village"; Manzanar, Whitney Portal are "hamlet".)
+const LABEL_LAYER_IDS = ['lbl-water', 'lbl-hamlet', 'lbl-peak', 'lbl-village',
+                         'lbl-town', 'lbl-city', 'lbl-region'];
 let _labelsTpl = null;
 async function labelsTileTemplate() {
   if (_labelsTpl) return _labelsTpl;
@@ -4001,23 +4003,29 @@ async function applyMapLabels() {
           layout: { 'text-field': name, 'text-font': ['Noto Sans Italic'],
                     'text-size': 11, 'text-max-width': 8 },
           paint: { 'text-color': '#bfdbfe', ...halo } },
-        { id: 'lbl-village', 'source-layer': 'place', minzoom: 11,
-          filter: place(['village', 'hamlet']),
+        { id: 'lbl-hamlet', 'source-layer': 'place', minzoom: 12,
+          filter: place(['hamlet']),
           layout: { 'text-field': name, 'text-font': ['Noto Sans Regular'],
                     'text-size': 11, 'text-max-width': 8 },
-          paint: { 'text-color': '#f3f4f6', ...halo } },
-        { id: 'lbl-town', 'source-layer': 'place', minzoom: 8,
-          filter: place(['town']),
-          layout: { 'text-field': name, 'text-font': ['Noto Sans Regular'],
-                    'text-size': ['interpolate', ['linear'], ['zoom'], 8, 11, 13, 14],
-                    'text-max-width': 8 },
-          paint: { 'text-color': '#ffffff', ...halo } },
+          paint: { 'text-color': '#e5e7eb', ...halo } },
         { id: 'lbl-peak', 'source-layer': 'mountain_peak', minzoom: 8,
           filter: ['all', ['has', 'name'],
                    ['match', ['get', 'class'], ['peak', 'volcano'], true, false]],
           layout: { 'text-field': peakTextField(), 'text-font': ['Noto Sans Regular'],
                     'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, -0.55],
                     'text-max-width': 9, 'symbol-sort-key': ['get', 'rank'] },
+          paint: { 'text-color': '#ffffff', ...halo } },
+        { id: 'lbl-village', 'source-layer': 'place', minzoom: 9,
+          filter: place(['village']),
+          layout: { 'text-field': name, 'text-font': ['Noto Sans Regular'],
+                    'text-size': ['interpolate', ['linear'], ['zoom'], 9, 11, 13, 13],
+                    'text-max-width': 8 },
+          paint: { 'text-color': '#ffffff', ...halo } },
+        { id: 'lbl-town', 'source-layer': 'place', minzoom: 8,
+          filter: place(['town']),
+          layout: { 'text-field': name, 'text-font': ['Noto Sans Bold'],
+                    'text-size': ['interpolate', ['linear'], ['zoom'], 8, 12, 13, 15],
+                    'text-max-width': 8 },
           paint: { 'text-color': '#ffffff', ...halo } },
         { id: 'lbl-city', 'source-layer': 'place', minzoom: 4,
           filter: place(['city']),
@@ -4189,6 +4197,15 @@ function initMap() {
     // flashing visibly during playback as they faded in over the old
     // parent tile.
     fadeDuration: 0,
+    // Tiles kept in memory per source after leaving the view. MapLibre
+    // sizes this as (tiles a FLAT viewport holds) x maxTileCacheZoomLevels
+    // (default 5) -- 45 here, with ~17 in use at pitch 75 -- and
+    // maxTileCacheSize only caps that. So a camera turn or a zoom step
+    // evicted tiles that were then re-fetched; with raster fading off, the
+    // gap showed as a black flash over already-loaded ground. Raise the
+    // multiplier, cap the total (lower on phones for GPU memory).
+    maxTileCacheZoomLevels: 20,
+    maxTileCacheSize: (('ontouchstart' in window) || navigator.maxTouchPoints) ? 200 : 500,
     // Every tile request funnels through here; when an offline .fvmap is
     // loaded, matching tiles are served from it as data: URLs.
     transformRequest: transformTileRequest,
@@ -4224,6 +4241,27 @@ function initMap() {
         if (cb) cb.checked = state.kk7Show;
       } },
   ]), 'top-right');
+
+  // Narrow screens (<= 640 px): MapLibre shows the attribution EXPANDED and
+  // only folds it on its own 'drag' event -- which our custom gestures and
+  // per-frame follow camera never fire, so the (now two-line) credits sat
+  // over the map for good. Fold it whenever MapLibre auto-expands it while
+  // sources load; once the user taps the (i) button, leave it alone.
+  {
+    const root = map.getContainer();
+    let userTouched = false;
+    root.addEventListener('click', e => {
+      if (e.target.closest && e.target.closest('.maplibregl-ctrl-attrib-button')) userTouched = true;
+    }, true);
+    const fold = () => {
+      if (userTouched) return;
+      const el = root.querySelector('.maplibregl-ctrl-attrib.maplibregl-compact-show');
+      if (el) el.classList.remove('maplibregl-compact-show');
+    };
+    const mo = new MutationObserver(fold);
+    mo.observe(root, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    setTimeout(() => mo.disconnect(), 15000);
+  }
 
   // Free-camera mode too: no animated move may leave the terrain height
   // under the centre frozen (see releaseStuckElevationFreeze).
@@ -4476,8 +4514,7 @@ function buildTipData(data) {
   if (!(now > tMs[0] && now < tMs[N - 1])) return null;
   const iCur = findIdx(now);
   if (iCur < 0 || iCur >= N - 1) return null;
-  const t0 = tMs[iCur], t1 = tMs[iCur + 1];
-  const uMax = (now - t0) / (t1 - t0);
+  const uMax = segU(iCur, now);       // same time warp as pilotAt()
   if (!(uMax > 1e-6)) return null;
   const sub = effSubdiv(N);
   const tipSub = Math.max(1, Math.ceil(sub * uMax));
@@ -4488,7 +4525,7 @@ function buildTipData(data) {
   return [{
     path,
     color: data[iCur].color,
-    tStart: t0,
+    tStart: tMs[iCur],
     tEnd: now,           // segmentAlpha treats this as just-flown
   }];
 }
@@ -4985,6 +5022,73 @@ function pushLayers(pilotPos, heading) {
 // ============================================================================
 //  Pilot interpolation
 // ============================================================================
+// Time -> spline parameter inside segment i (fix i .. i+1), with the
+// pilot's SPEED continuous across fixes.
+//
+// Plain u = (ms - t_i) / dt keeps the pilot at a constant pace inside each
+// segment, so the speed jumps at every fix (each segment has its own
+// length / duration, and the spline's dP/du differs either side of a
+// knot). Measured on a Syride log (mixed 1 s / 2 s fixes, ~11 m/s ground
+// speed): median jump 1.3 m/s, 10 % over 4 m/s. The follow camera is glued
+// to the pilot, so every jump shook the whole map -- once per fix, i.e.
+// 10x per second at 10x playback, and 10x larger on screen.
+//
+// Instead each segment gets a cubic Hermite time warp u(tau) with u(0)=0,
+// u(1)=1 and end slopes chosen so the speed at each fix equals the mean
+// of the two adjoining segments' average speeds; Fritsch-Carlson scaling
+// keeps u monotonic (the pilot never runs backwards). Horizontal metres
+// only, so the terrain exaggeration setting doesn't change the timing.
+let _tw = null;   // per-segment cache: horizontal length and |dP/du| at both ends
+function _twData() {
+  const key = `${state.smoothSubdiv}|${state.smoothTension}`;
+  if (!_tw || _tw.fx !== fixes || _tw.key !== key || _tw.len.length !== N) {
+    _tw = { fx: fixes, key, len: new Float64Array(N).fill(NaN),
+            d0: new Float64Array(N), d1: new Float64Array(N) };
+  }
+  return _tw;
+}
+function _twSeg(i) {
+  const w = _twData();
+  if (Number.isNaN(w.len[i])) {
+    const mLon = 111320 * Math.cos(fixes[i].lat * Math.PI / 180);
+    const hd = (a, b) => Math.hypot((b[0] - a[0]) * mLon, (b[1] - a[1]) * 111320);
+    let L = 0, prev = splineSample(i, 0);
+    for (let k = 1; k <= 8; k++) { const q = splineSample(i, k / 8); L += hd(prev, q); prev = q; }
+    const e = 1e-3;
+    w.len[i] = L;
+    w.d0[i] = hd(splineSample(i, 0), splineSample(i, e)) / e;
+    w.d1[i] = hd(splineSample(i, 1 - e), splineSample(i, 1)) / e;
+  }
+  return w;
+}
+function segU(i, ms) {
+  const t0 = tMs[i], t1 = tMs[Math.min(i + 1, N - 1)];
+  const dtMs = t1 - t0;
+  if (!(dtMs > 0)) return 0;
+  const tau = Math.max(0, Math.min(1, (ms - t0) / dtMs));
+  if (i <= 0 || i >= N - 2) return tau;
+  const w = _twSeg(i);
+  const L = w.len[i];
+  if (!(L > 0.5)) return tau;                     // standing still
+  const vSeg = j => {
+    if (j < 0 || j >= N - 1) return null;
+    const d = (tMs[j + 1] - tMs[j]) / 1000;
+    return d > 0 ? _twSeg(j).len[j] / d : null;
+  };
+  const v = L / (dtMs / 1000);
+  const vPrev = vSeg(i - 1), vNext = vSeg(i + 1);
+  const vLo = vPrev == null ? v : (vPrev + v) / 2;
+  const vHi = vNext == null ? v : (vNext + v) / 2;
+  const dt = dtMs / 1000;
+  let a = w.d0[i] > 1e-6 ? vLo * dt / w.d0[i] : 1;
+  let b = w.d1[i] > 1e-6 ? vHi * dt / w.d1[i] : 1;
+  a = Math.max(0, a); b = Math.max(0, b);
+  const r = a * a + b * b;
+  if (r > 9) { const k = 3 / Math.sqrt(r); a *= k; b *= k; }
+  const t2 = tau * tau, t3 = t2 * tau;
+  const u = (t3 - 2 * t2 + tau) * a + (-2 * t3 + 3 * t2) + (t3 - t2) * b;
+  return Math.max(0, Math.min(1, u));
+}
 function pilotAt(ms) {
   if (N === 0) return [0, 0, 0];
   if (ms <= T0) return [fixes[0].lon, fixes[0].lat, altDisplay(fixes[0])];
@@ -4994,11 +5098,9 @@ function pilotAt(ms) {
     const mid = (lo + hi + 1) >> 1;
     if (tMs[mid] <= ms) lo = mid; else hi = mid - 1;
   }
-  const dt = tMs[Math.min(lo + 1, N - 1)] - tMs[lo];
-  const u  = dt > 0 ? (ms - tMs[lo]) / dt : 0;
   // Pilot rides the same spline that the rendered track follows so the
   // arrow always sits exactly on the visible line.
-  return splineSample(lo, u);
+  return splineSample(lo, segU(lo, ms));
 }
 // Heading = bearing from a point just before the pilot to a point just
 // after, sampled on the *same* trajectory pilotAt() uses (i.e. the spline
@@ -8061,6 +8163,8 @@ let _camTrim = 0;               // slow integral trim (m): absorbs the small
                                 //   reintroduce the old feedback spiral.
 let _camEye = null;             // smoothed eye {lng, lat, z} (display m)
 let _camArm = 1;                // spring-arm length as a fraction of D
+let _camS = null;               // eye->centre distance of the followed ray hit
+let _camNearSince = 0;          // when a nearer first hit appeared (ms)
 const CAM_CLEARANCE = 60;       // eye clearance above terrain (display m)
 const CAM_ARM_MIN = 0.08;       // shortest arm, fraction of D
 const CAM_MAX_ZOOM = 20;        // closest applied framing (eye→centre ~150 m)
@@ -8173,6 +8277,7 @@ function centerOnPilotFrame(pos, dtMs) {
   // flight stays glassy, seeks become a smooth catch-up move. When follow
   // resumes after a gap, start from where MapLibre's camera really is.
   if (!_camEye || !continuous) {
+    _camS = null;
     let start = null;
     try {
       const cp = t.getCameraPosition();
@@ -8180,7 +8285,11 @@ function centerOnPilotFrame(pos, dtMs) {
     } catch (_) {}
     _camEye = start || { lng: target[0], lat: target[1], z: target[2] };
   }
-  const k = 1 - Math.exp(-dt / 140);
+  // Longer at fast playback: the pilot crosses ~speed fixes per second and
+  // any residual GPS wobble reaches the screen speed-times faster. The
+  // added lag is a few dozen metres even at 10x.
+  const tauEye = 140 * Math.min(3, Math.sqrt(state.playing ? Math.max(1, state.speed) : 1));
+  const k = 1 - Math.exp(-dt / tauEye);
   _camEye.lng += (target[0] - _camEye.lng) * k;
   _camEye.lat += (target[1] - _camEye.lat) * k;
   _camEye.z   += (target[2] - _camEye.z) * k;
@@ -8192,36 +8301,71 @@ function centerOnPilotFrame(pos, dtMs) {
   }
   const eLng = _camEye.lng, eLat = _camEye.lat, eyeZ = _camEye.z;
 
-  // Centre = where the view ray from the eye meets MapLibre's own terrain
-  // (the elevation it will render the centre at). March outward with
-  // growing steps, then bisect. No terrain: fall back to the ground under
-  // the pilot as the centre height.
+  // Centre = a point where the view ray from the eye meets MapLibre's own
+  // terrain (the elevation it will render the centre at). Any such point
+  // renders the same picture, but the choice sets the applied zoom -- and
+  // with it MapLibre's tile LOD set and the pilot marker size. With a flat
+  // view the FIRST hit flips between a grazed ridge and the valley beyond
+  // (measured: ~400 m centre jumps, +/-0.13 zoom, in out-and-back pairs a
+  // few hundred ms apart), and each flip dropped and re-fetched tiles --
+  // the black flashes. So: march the whole ray, collect every crossing
+  // plus near misses (ray within a few metres of a ridge top -- holding
+  // the centre there costs only that many metres of eye height), keep
+  // following the one we had, and move to a nearer first hit only once it
+  // has persisted 0.7 s. No terrain: the ground under the pilot stands in.
   const terr = map.terrain;
   const LngLat = maplibregl.LngLat;
   const rayPt = s => [eLng + s * sinP * fwdX / mLon, eLat + s * sinP * fwdY / mLat,
                       eyeZ - s * cosP];
   let sHit;
   if (terr && t) {
-    const elevAt = (lng, lat) => {
-      try { return terr.getElevationForLngLatZoom(new LngLat(lng, lat), t.tileZoom); }
-      catch (_) { return 0; }
-    };
-    let s0 = 0, step = 10, s1 = null;
-    for (let i = 0; i < 100; i++) {
-      const s = s0 + step;
+    const fAt = s => {
       const r = rayPt(s);
-      if (r[2] <= elevAt(r[0], r[1])) { s1 = s; break; }
-      s0 = s; step *= 1.08;
-      if (r[2] < -1000) break;                  // far below any terrain
+      let e = 0;
+      try { e = terr.getElevationForLngLatZoom(new LngLat(r[0], r[1]), t.tileZoom); } catch (_) {}
+      return r[2] - e;                 // ray height above terrain
+    };
+    const S = [0], F = [fAt(0)];
+    for (let i = 0, s = 0, step = 10; i < 120; i++) {
+      s += step; step *= 1.08;
+      S.push(s); F.push(fAt(s));
+      if (eyeZ - s * cosP < -1000) break;     // far below any terrain
     }
-    if (s1 == null) sHit = s0;
-    else {
-      for (let i = 0; i < 10; i++) {
-        const sm = (s0 + s1) / 2, r = rayPt(sm);
-        if (r[2] <= elevAt(r[0], r[1])) s1 = sm; else s0 = sm;
+    const cand = [];
+    let first = null;
+    for (let k = 1; k < S.length; k++) {
+      if ((F[k - 1] > 0) !== (F[k] > 0)) {    // crossing: bisect
+        let s0 = S[k - 1], s1 = S[k];
+        const pos0 = F[k - 1] > 0;
+        for (let j = 0; j < 10; j++) {
+          const sm = (s0 + s1) / 2;
+          if ((fAt(sm) > 0) === pos0) s0 = sm; else s1 = sm;
+        }
+        const sc = (s0 + s1) / 2;
+        cand.push(sc);
+        if (first == null && pos0) first = sc;
+      } else if (k < S.length - 1 && F[k] > 0 && F[k] <= F[k - 1]
+                 && F[k] <= F[k + 1] && F[k] < 6 + 0.002 * S[k]) {
+        cand.push(S[k]);                      // near miss over a ridge top
       }
-      sHit = (s0 + s1) / 2;
     }
+    let pick = null;
+    if (_camS != null && cand.length) {
+      let best = Infinity;
+      for (const c of cand) {
+        const d = Math.abs(Math.log(c / _camS));
+        if (d < best) { best = d; pick = c; }
+      }
+      if (best > Math.log(1.25)) pick = null;  // the one we followed is gone
+    }
+    if (pick != null && first != null && first < pick / 1.3) {
+      // A nearer surface (more detail near the pilot) -- take it once it
+      // has stayed put, not on a one-frame graze.
+      if (!_camNearSince) _camNearSince = now;
+      if (now - _camNearSince > 700) { pick = first; _camNearSince = 0; }
+    } else _camNearSince = 0;
+    if (pick == null) pick = first != null ? first : (cand.length ? cand[0] : S[S.length - 1]);
+    sHit = _camS = pick;
   } else {
     let elev = groundDisplayAt(state.currentMs);
     if (elev == null || !isFinite(elev)) elev = Math.max(0, alt_p - 400);
@@ -8701,7 +8845,7 @@ function loadFlight(newFixes, filename, opts) {
   _dirLastMs = -1; _dirFitCam = null;          //   the previous flight too
   _dirZoomOverride = null; _dirSetZoom = null; _dirLastSeg = null;
   _dirZoom = null; camNominalZoom = null; _camLastApplied = null;
-  _camTrim = 0; _camEye = null; _camArm = 1;
+  _camTrim = 0; _camEye = null; _camArm = 1; _camS = null;
   dirShots = [];                               // shots too (like the A-B loop)
   if (window._refreshShotUi) window._refreshShotUi();
   updateLoopBand();
