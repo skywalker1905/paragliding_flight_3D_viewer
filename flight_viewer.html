@@ -1840,6 +1840,7 @@ function recomputeFromFixes() {
   centerLat = lats / N; centerLon = lons / N;
   updateLaunchTimezone();   // DST-aware via Intl when tz-lookup is loaded
   groundAlt = null; groundReady = false; groundLoading = false;
+  groundRetryAt = 0; groundRetryDelay = 0;
 }
 
 // Terrain altitude (true metres above sea level) directly below each
@@ -1855,6 +1856,8 @@ function recomputeFromFixes() {
 let groundAlt = null;       // Float64Array length N or null
 let groundReady = false;
 let groundLoading = false;
+let groundRetryAt = 0;      // performance.now() before which a pass must not restart
+let groundRetryDelay = 0;   // current back-off after a pass left gaps (ms)
 
 const TERRARIUM_ZOOM = 14;  // ~10 m/pixel; tight enough for ridge tops
 const terrariumCache = new Map(); // "z/x/y" -> Promise<ImageData|null>
@@ -1891,15 +1894,22 @@ function fetchTerrariumTile(z, tx, ty) {
         resolve(null);
       }
     };
-    img.onerror = () => resolve(null);
     // Serve from a loaded offline map when available (chart ground line
-    // and AGL keep working with no network).
+    // and AGL keep working with no network). An offline copy that fails to
+    // decode falls back to the network once.
+    const net = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/'
+      + z + '/' + tx + '/' + ty + '.png';
     const off = offlineTiles && offlineTiles.get('dem/' + key);
-    img.src = off
-      || ('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/'
-          + z + '/' + tx + '/' + ty + '.png');
+    img.onerror = () => {
+      if (off && img.src !== net) { img.src = net; return; }
+      resolve(null);
+    };
+    img.src = off || net;
   });
   terrariumCache.set(key, p);
+  // A failure is not cached for good: drop it so a later pass (after the
+  // caller's back-off) fetches again instead of re-reading the same null.
+  p.then(d => { if (!d && terrariumCache.get(key) === p) terrariumCache.delete(key); });
   return p;
 }
 
@@ -1924,7 +1934,10 @@ function demDisplayAtSync(lon, lat) {
   const d = terrariumData.get(key);
   if (d === undefined) {
     terrariumData.set(key, null);              // in flight
-    fetchTerrariumTile(z, tx, ty).then(img => terrariumData.set(key, img || null));
+    fetchTerrariumTile(z, tx, ty).then(img => {
+      terrariumData.set(key, img || null);
+      if (!img) setTimeout(() => terrariumData.delete(key), 15000);   // retry later
+    });
     return null;
   }
   if (!d) return null;
@@ -1941,6 +1954,12 @@ function demDisplayAtSync(lon, lat) {
 // overlapping passes and the tile/groundAlt caches dedupe the work.
 function sampleGroundAlt() {
   if (N === 0 || groundReady || groundLoading) return;
+  // After a pass that left gaps (tiles failed: offline, blocked, a corrupt
+  // offline pack), wait out the back-off. refreshChart() calls us on every
+  // redraw; restarting at once meant: failed tiles resolve null instantly
+  // -> pass ends -> refreshChart() -> new pass -> ... an endless microtask
+  // loop that froze the whole page (seen with the demo flight).
+  if (performance.now() < groundRetryAt) return;
   if (!groundAlt || groundAlt.length !== N) {
     groundAlt = new Float64Array(N);
     groundAlt.fill(NaN);
@@ -1978,6 +1997,15 @@ function sampleGroundAlt() {
     for (let k = 0; k < N; k++) if (Number.isNaN(groundAlt[k])) { allValid = false; break; }
     groundReady = allValid;
     groundLoading = false;
+    if (!allValid) {
+      groundRetryDelay = Math.min(60000, groundRetryDelay ? groundRetryDelay * 2 : 5000);
+      groundRetryAt = performance.now() + groundRetryDelay;
+      const fx0 = fixes;
+      setTimeout(() => { if (fixes === fx0 && !groundReady) sampleGroundAlt(); },
+                 groundRetryDelay + 50);
+    } else {
+      groundRetryDelay = 0;
+    }
     refreshChart();
     if (groundReady) {
       autoAlignGround();
@@ -3159,6 +3187,31 @@ async function ofdbDel(key) {
     });
   } finally { db.close(); }
 }
+// Keep only tile entries that can actually be images: a data: URL whose
+// payload starts with a PNG / JPEG / WebP signature and is not trivially
+// short. A pack whose tiles were all 1-byte placeholders
+// ("data:image/png;base64,AQ==") was being restored on every visit; every
+// tile then failed to decode -- blank map, and (before the back-off in
+// sampleGroundAlt) a frozen page.
+function sanitizeOfflineTiles(tilesObj) {
+  const good = new Map();
+  let dropped = 0;
+  for (const [k, v] of Object.entries(tilesObj || {})) {
+    const m = typeof v === 'string' && /^data:image\/[a-z+.-]+;base64,(.*)$/i.exec(v);
+    let ok = false;
+    if (m && m[1].length >= 88) {             // >= ~64 bytes of image data
+      try {
+        const h = atob(m[1].slice(0, 16));
+        const b = i => h.charCodeAt(i);
+        ok = (b(0) === 0x89 && h.slice(1, 4) === 'PNG')
+          || (b(0) === 0xFF && b(1) === 0xD8)
+          || (h.slice(0, 4) === 'RIFF' && h.slice(8, 12) === 'WEBP');
+      } catch (_) {}
+    }
+    if (ok) good.set(k, v); else dropped++;
+  }
+  return { tiles: good, dropped };
+}
 async function rememberOfflineMap(name, tilesObj) {
   try {
     await ofdbPut('current', { name, tiles: tilesObj, saved: Date.now() });
@@ -3168,7 +3221,15 @@ async function restoreOfflineMap() {
   try {
     const rec = await ofdbGet('current');
     if (!rec || !rec.tiles) return;
-    offlineTiles = new Map(Object.entries(rec.tiles));
+    const { tiles, dropped } = sanitizeOfflineTiles(rec.tiles);
+    if (!tiles.size) {
+      // Nothing usable -- forget it rather than restore it every visit.
+      await ofdbDel('current').catch(() => {});
+      console.warn(`stored offline map "${rec.name}" had no valid tiles; removed`);
+      return;
+    }
+    if (dropped) console.warn(`stored offline map: ${dropped} invalid tiles ignored`);
+    offlineTiles = tiles;
     offlineMapName = rec.name || 'saved map';
     updateOfflineStatusUi();
     reloadMapStyle();
@@ -3595,10 +3656,16 @@ function loadOfflineMapText(text, filename) {
     showStatus('Not a valid .fvmap offline map: ' + filename, true);
     return false;
   }
-  offlineTiles = new Map(Object.entries(obj.tiles));
+  const { tiles: goodTiles, dropped } = sanitizeOfflineTiles(obj.tiles);
+  if (!goodTiles.size) {
+    showStatus('Offline map has no usable tiles (corrupt file?): ' + filename, true);
+    return false;
+  }
+  offlineTiles = goodTiles;
   offlineMapName = obj.name || filename.replace(/\.[^.]+$/, '');
   updateOfflineStatusUi();
-  rememberOfflineMap(offlineMapName, obj.tiles);   // auto-restores next visit
+  // Auto-restores next visit -- only the tiles that passed the check.
+  rememberOfflineMap(offlineMapName, Object.fromEntries(goodTiles));
   // Merge any launch/LZ sites the pack carries (name+type dedupe).
   if (Array.isArray(obj.sites) && obj.sites.length) {
     let added = 0;
@@ -3611,7 +3678,8 @@ function loadOfflineMapText(text, filename) {
       if (window._renderSiteList) window._renderSiteList();
     }
   }
-  const msg = `Offline map loaded: ${offlineTiles.size} tiles (${offlineMapName})`;
+  const msg = `Offline map loaded: ${offlineTiles.size} tiles (${offlineMapName})`
+    + (dropped ? ` — ${dropped} corrupt tiles skipped` : '');
   const landingEl = document.getElementById('landing');
   if (landingEl && !landingEl.classList.contains('hidden')) {
     // The status pill lives inside the (hidden) app shell -- surface the
@@ -6054,6 +6122,15 @@ function syncProgressUi() {
   document.getElementById('progTime').textContent = fmtSec((state.currentMs - T0) / 1000);
   document.getElementById('playIcon').innerHTML = state.playing ? ICON_PAUSE : ICON_PLAY;
 }
+// Play / pause from the play button or Space. Pressing play once the
+// replay has stopped at the end starts it over from the beginning.
+function togglePlay() {
+  if (!state.playing && N > 0 && state.currentMs >= T1) {
+    state.currentMs = (loopAMs && loopBMs && loopBMs > loopAMs) ? loopAMs : T0;
+    syncProgressUi();
+  }
+  setPlaying(!state.playing);
+}
 function setPlaying(p) {
   state.playing = p;
   document.getElementById('playIcon').innerHTML = p ? ICON_PAUSE : ICON_PLAY;
@@ -6155,7 +6232,13 @@ function tick(nowMs) {
             && state.currentMs > loopBMs) {
           state.currentMs = loopAMs;    // A-B loop wraps inside the band
         }
-        if (state.currentMs > T1) state.currentMs = T0;
+        if (state.currentMs >= T1) {
+          // End of the flight: stop on the last fix instead of wrapping
+          // back to the start. (Play again restarts -- see togglePlay.)
+          state.currentMs = T1;
+          setPlaying(false);
+          syncProgressUi();
+        }
       }
       const pos = pilotAt(state.currentMs);
       const head = pilotHeading(state.currentMs);
@@ -7593,7 +7676,7 @@ function setupAppUi() {
   }
 
   // Transport
-  document.getElementById('playBtn').onclick = () => setPlaying(!state.playing);
+  document.getElementById('playBtn').onclick = togglePlay;
   document.getElementById('restartBtn').onclick = () => {
     state.currentMs = T0; setPlaying(true); syncProgressUi();
   };
@@ -8031,7 +8114,7 @@ function setupAppUi() {
         state.showHud = !state.showHud;
         updateHudVisibility();
         break;
-      case ' ': setPlaying(!state.playing); e.preventDefault(); break;
+      case ' ': togglePlay(); e.preventDefault(); break;
     }
   });
 
