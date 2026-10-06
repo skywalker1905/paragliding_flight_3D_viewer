@@ -8168,6 +8168,7 @@ let _camNearSince = 0;          // when a nearer first hit appeared (ms)
 const CAM_CLEARANCE = 60;       // eye clearance above terrain (display m)
 const CAM_ARM_MIN = 0.08;       // shortest arm, fraction of D
 const CAM_MAX_ZOOM = 20;        // closest applied framing (eye→centre ~150 m)
+const CAM_LOD_DEADBAND = 0.015; // zoom hysteresis around tile-level boundaries
 // Metres per CSS pixel at MapLibre zoom z. MapLibre zooms are defined on
 // 512 px tiles -- half the 256-px-tile scale mPerPx() returns. The camera
 // solve once used mPerPx() here, so MapLibre put the eye at HALF the
@@ -8385,6 +8386,27 @@ function centerOnPilotFrame(pos, dtMs) {
     cLng = rayPt(sCap)[0]; cLat = rayPt(sCap)[1];
   }
   zA = Math.max(map.getMinZoom(), zA);
+  // Tile-LOD deadband. MapLibre picks the terrain mesh / DEM level as
+  // floor(zoom) and raster imagery as round(zoom). The ray-hit distance
+  // carries ~0.002 zoom of frame-to-frame noise, so an applied zoom
+  // sitting on 14.000 toggled the whole terrain between z14 and z13 (DEM
+  // z11) every few frames -- the one-frame "low-res / smoothed mountain"
+  // flash (measured: tileZoom 14 -> 13 -> 14 at z 14.000 / 13.998 /
+  // 14.001). Hold the previous side of each integer / half-integer level
+  // boundary until the zoom is clearly past it. The centre then sits on
+  // the view ray at the held distance (a few metres off the terrain at
+  // most), so the eye pose is unchanged.
+  if (continuous && _camLastApplied != null && isFinite(_camLastApplied)) {
+    const side = z => Math.floor(z * 2);
+    if (side(zA) !== side(_camLastApplied)) {
+      const b = Math.round(zA * 2) / 2;
+      if (Math.abs(zA - b) < CAM_LOD_DEADBAND) {
+        zA = _camLastApplied >= b ? b + 1e-4 : b - 1e-4;
+        const sHeld = ctcdPx * mlMPerPx(cLat, zA);
+        cLng = rayPt(sHeld)[0]; cLat = rayPt(sHeld)[1];
+      }
+    }
+  }
 
   // Slow integral trim: measure the pilot's vertical screen error with
   // the renderer's own projection and integrate it into a metre offset
@@ -10170,29 +10192,38 @@ function drawChartOverlay(ctx, dpr, mapRect) {
   ctx.restore();
 }
 
+// Recording resolution cap. A Retina window is ~3456 px wide; encoding
+// that in real time overloaded the H.264 encoder (the map-only recording
+// came out at ~15 fps with duplicated timestamps) and is far beyond the
+// level the stream declares. 1920 px wide = 1080p-class.
+const REC_MAX_W = 1920;
+const recEven = n => Math.max(2, Math.round(n / 2) * 2);   // H.264 needs even sizes
+
 function drawCompositeFrame() {
   const ctx = recComp.ctx;
   if (!ctx || !map) return;
   const mapCanvas = map.getCanvas();
-  if (recComp.canvas.width !== mapCanvas.width
-      || recComp.canvas.height !== mapCanvas.height) {
-    recComp.canvas.width = mapCanvas.width;
-    recComp.canvas.height = mapCanvas.height;
-  }
+  // Output size is fixed when recording starts: a mid-stream size change
+  // breaks the encoder. A later window resize is scaled to fit.
+  const k = recComp.canvas.width / mapCanvas.width;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   // Must run inside map 'render' (WebGL back buffer is still live there).
-  ctx.drawImage(mapCanvas, 0, 0);
+  ctx.drawImage(mapCanvas, 0, 0, recComp.canvas.width, mapCanvas.height * k);
+  ctx.setTransform(k, 0, 0, k, 0, 0);
   const cw = mapCanvas.clientWidth || 1;
   const dpr = mapCanvas.width / cw;
   const mapRect = mapCanvas.getBoundingClientRect();
   drawHudOverlay(ctx, dpr, mapRect);
   drawChartOverlay(ctx, dpr, mapRect);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 function startComposite() {
   const mapCanvas = map.getCanvas();
+  const k = Math.min(1, REC_MAX_W / mapCanvas.width);
   recComp.canvas = document.createElement('canvas');
-  recComp.canvas.width = mapCanvas.width;
-  recComp.canvas.height = mapCanvas.height;
+  recComp.canvas.width = recEven(mapCanvas.width * k);
+  recComp.canvas.height = recEven(mapCanvas.height * k);
   recComp.ctx = recComp.canvas.getContext('2d');
   recComp.renderHandler = () => drawCompositeFrame();
   map.on('render', recComp.renderHandler);
@@ -10215,8 +10246,13 @@ function stopComposite() {
 // H.264 first: QuickTime / stock iOS players cannot decode VP8/VP9, so an
 // .mp4 with avc1 is the only variant that opens outside VLC. Browsers
 // that can't encode H.264 fall back to WebM (noted in the status toast).
+// Level 4.0 (…28) first: it covers 1920x1080 at 30 fps. The old first pick,
+// avc1.42E01E, is Baseline level 3.0 -- rated for ~720x576 only.
 function pickRecordingMime() {
   const candidates = [
+    'video/mp4;codecs=avc1.640028',
+    'video/mp4;codecs=avc1.4D0028',
+    'video/mp4;codecs=avc1.42E028',
     'video/mp4;codecs=avc1.42E01E',
     'video/mp4;codecs=avc1',
     'video/webm;codecs=h264',
@@ -10228,6 +10264,48 @@ function pickRecordingMime() {
     if (MediaRecorder.isTypeSupported(m)) return m;
   }
   return '';
+}
+
+// Full-page recording goes through a fixed-size canvas instead of feeding
+// the screen-capture stream straight to MediaRecorder. Once sharing starts
+// Chrome shows its "sharing this tab" bar, the captured page gets ~56 px
+// shorter, and the encoder -- still at the first frame's size -- left the
+// bottom rows unwritten (a green band in every frame) and stalled in
+// players. The canvas size is taken after the bar has appeared and never
+// changes; later size changes are letterboxed. Also capped at REC_MAX_W.
+async function startDisplayPipe(displayStream) {
+  const video = document.createElement('video');
+  video.muted = true; video.playsInline = true;
+  video.srcObject = displayStream;
+  await video.play();
+  await new Promise(r => setTimeout(r, 700));   // let the share bar settle
+  const vw0 = video.videoWidth || 1280, vh0 = video.videoHeight || 720;
+  const k = Math.min(1, REC_MAX_W / vw0);
+  const canvas = document.createElement('canvas');
+  canvas.width = recEven(vw0 * k);
+  canvas.height = recEven(vh0 * k);
+  const ctx = canvas.getContext('2d');
+  let live = true;
+  const draw = () => {
+    if (!live) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (vw && vh) {
+      const s = Math.min(canvas.width / vw, canvas.height / vh);
+      const dw = vw * s, dh = vh * s;
+      if (dw < canvas.width - 1 || dh < canvas.height - 1) {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.drawImage(video, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+    }
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(draw);
+    else requestAnimationFrame(draw);
+  };
+  draw();
+  return {
+    canvas,
+    stop() { live = false; video.pause(); video.srcObject = null; },
+  };
 }
 
 const recCtl = { recorder: null, chunks: [], buttons: [] };
@@ -10247,14 +10325,15 @@ async function toggleRecording() {
   // chart onto an offscreen canvas (no prompt, clean output).
   const wantFull = state.recordFullUi
     && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia;
-  let stream, displayStream = null;
+  let stream, displayStream = null, fullPipe = null;
   try {
     if (wantFull) {
       displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30 }, audio: false,
         preferCurrentTab: true, selfBrowserSurface: 'include',
       });
-      stream = displayStream;
+      fullPipe = await startDisplayPipe(displayStream);
+      stream = fullPipe.canvas.captureStream(30);
     } else {
       stream = startComposite().captureStream(30);
     }
@@ -10262,6 +10341,7 @@ async function toggleRecording() {
       { mimeType: mime || undefined, videoBitsPerSecond: 8_000_000 });
   } catch (e) {
     if (!wantFull) stopComposite();
+    if (fullPipe) fullPipe.stop();
     if (displayStream) displayStream.getTracks().forEach(t => t.stop());
     if (e && e.name === 'NotAllowedError') { showStatus('Recording cancelled'); return; }
     showStatus('Recording unavailable: ' + e.message, true);
@@ -10272,6 +10352,7 @@ async function toggleRecording() {
   recorder.ondataavailable = e => { if (e.data && e.data.size) recCtl.chunks.push(e.data); };
   recorder.onstop = () => {
     if (!wantFull) stopComposite();
+    if (fullPipe) fullPipe.stop();
     if (displayStream) displayStream.getTracks().forEach(t => t.stop());
     const type = recorder.mimeType || mime || 'video/webm';
     const ext = /mp4/.test(type) ? '.mp4' : '.webm';
