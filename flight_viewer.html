@@ -127,7 +127,7 @@
   /* ---------- App shell ---------- */
   #app { position: fixed; inset: 0; }
   #map { position: absolute; inset: 0; }
-  #mapContainer { width: 100%; height: 100%; background: #0a1226; }
+  #mapContainer { width: 100%; height: 100%; background: #5b5547; }
   .maplibregl-ctrl-attrib { font-size: 10px; }
   .maplibregl-ctrl-group {
     border-radius: 8px !important;
@@ -1057,8 +1057,7 @@
         <div class="secBody" data-secbody="director" id="secDirectorBody" style="display:none">
         <div style="font-size:11px;color:var(--fg-mute);line-height:1.5;padding-bottom:2px">
           Per-phase framing: first slider = distance (zoom, higher = closer),
-          second = tilt (pitch). The finale distance is automatic — it always
-          pulls back until the whole track fits.
+          second = tilt (pitch).
         </div>
         <div class="row">
           <span class="lbl" title="Opening wide shot right after takeoff.">Intro</span>
@@ -1088,24 +1087,10 @@
           </div>
         </div>
         <div class="row">
-          <span class="lbl" title="Closing overview: the camera releases the pilot and pulls back over the whole track. Distance is automatic.">Finale tilt</span>
-          <div class="ctl">
-            <input type="range" id="dirPitchFinale" min="0" max="75" step="1" value="48" data-default="48" style="width:70px" title="Camera tilt (pitch)">
-            <span id="dirPitchFinaleV" style="min-width:26px;color:var(--fg-dim)">48°</span>
-          </div>
-        </div>
-        <div class="row">
           <span class="lbl" title="How long the opening wide shot lasts, in seconds of flight time.">Intro length</span>
           <div class="ctl">
             <input type="range" id="dirIntroSec" min="0" max="120" step="5" value="20" data-default="20" style="width:120px">
             <span id="dirIntroSecV" style="min-width:36px;color:var(--fg-dim)">20 s</span>
-          </div>
-        </div>
-        <div class="row">
-          <span class="lbl" title="How long the closing full-track overview lasts, in seconds of flight time before landing.">Finale length</span>
-          <div class="ctl">
-            <input type="range" id="dirFinaleSec" min="10" max="240" step="5" value="60" data-default="60" style="width:120px">
-            <span id="dirFinaleSecV" style="min-width:36px;color:var(--fg-dim)">60 s</span>
           </div>
         </div>
         <div class="row">
@@ -2644,9 +2629,9 @@ const PERSIST_KEYS = [
   'curtainFadeOn', 'curtainHoldSec',
   'kk7Show', 'kk7Thermals', 'kk7Skyways', 'kk7Opacity', 'kk7Season', 'kk7Tod',
   'openaipKey', 'openaipShow',
-  'dirIntroSec', 'dirFinaleSec',
+  'dirIntroSec',
   'dirZoomIntro', 'dirZoomThermal', 'dirZoomGlide',
-  'dirPitchIntro', 'dirPitchThermal', 'dirPitchGlide', 'dirPitchFinale',
+  'dirPitchIntro', 'dirPitchThermal', 'dirPitchGlide',
   'tileCacheOn', 'tileCacheMaxMB',
 ];
 const PREFS_SCHEMA = 6;
@@ -2771,14 +2756,10 @@ const rawState = {
   // thermal.kk7.ch overlay (thermal probability + skyways heatmaps).
   // Master switch also lives on the map as the ♨ control button.
   // Director camera tuning. Per-phase framing distance (zoom) and tilt
-  // (pitch); the finale's zoom is always the auto-computed full-track
-  // fit, so it only carries a pitch. Intro/finale lengths in seconds of
-  // flight time.
+  // (pitch); intro length in seconds of flight time.
   dirIntroSec: 20,
-  dirFinaleSec: 60,
   dirZoomIntro: 14.2, dirZoomThermal: 15.0, dirZoomGlide: 14.6,
   dirPitchIntro: 45, dirPitchThermal: 62, dirPitchGlide: 55,
-  dirPitchFinale: 48,
 
   kk7Show: true,        // master on/off for the whole kk7 overlay
   kk7Thermals: true,    // thermal-probability layer (≤ z12), on by default
@@ -3877,7 +3858,12 @@ function buildMapStyle() {
                attribution: 'DEM \u00a9 Mapzen / AWS Open Data' },
     },
     layers: [
-      { id: 'bg',  type: 'background', paint: { 'background-color': '#0a1226' } },
+      // Earth-toned backdrop. With 3-D terrain this layer is rendered into
+      // the terrain texture together with the imagery, so it is what shows
+      // on the ground wherever a satellite tile is momentarily missing (a
+      // far tile still loading, or swapping level as the camera turns at
+      // speed). Navy there read as a dark wedge "flashing" in the terrain.
+      { id: 'bg',  type: 'background', paint: { 'background-color': '#5b5547' } },
       // raster-fade-duration 0: newly loaded tiles swap in instantly.
       // The default 300 ms cross-fade blends the incoming tile with the
       // dark background, which reads as a visible flash during playback.
@@ -6251,14 +6237,7 @@ function tick(nowMs) {
         const pinching = window._activeTouchCount
           && window._activeTouchCount() >= 2;
         if (!pinching) {
-          // The Director finale frames the whole track instead of the
-          // pilot -- recentering would fight its slow drift to the
-          // track centre. (Applies only while it is actually steering;
-          // a user shot inside the finale window is pilot-centred again.)
-          const directorFinale = state.camStyle === 'director'
-            && _dirPhase === 'finale' && state.playing
-            && !dirShotAt(state.currentMs);
-          if (!directorFinale) centerOnPilotFrame(pos, dt);
+          centerOnPilotFrame(pos, dt);
           if (!dragActive()) {
             // Chase steers only while playing (a paused user can drag
             // freely). Orbit keeps circling even while paused -- slowly
@@ -6562,9 +6541,7 @@ function setupAppUi() {
     ['dirPitchIntro',   v => Math.round(v) + '°'],
     ['dirPitchThermal', v => Math.round(v) + '°'],
     ['dirPitchGlide',   v => Math.round(v) + '°'],
-    ['dirPitchFinale',  v => Math.round(v) + '°'],
     ['dirIntroSec',     v => Math.round(v) + ' s'],
-    ['dirFinaleSec',    v => Math.round(v) + ' s'],
   ];
   for (const [key, fmt] of dirParams) {
     const el = document.getElementById(key);
@@ -7248,8 +7225,7 @@ function setupAppUi() {
       ['dirZoomIntro', state.dirZoomIntro], ['dirZoomThermal', state.dirZoomThermal],
       ['dirZoomGlide', state.dirZoomGlide], ['dirPitchIntro', state.dirPitchIntro],
       ['dirPitchThermal', state.dirPitchThermal], ['dirPitchGlide', state.dirPitchGlide],
-      ['dirPitchFinale', state.dirPitchFinale], ['dirIntroSec', state.dirIntroSec],
-      ['dirFinaleSec', state.dirFinaleSec],
+      ['dirIntroSec', state.dirIntroSec],
       ['tileCacheMax', state.tileCacheMaxMB],
     ];
     for (const [id, v] of restore) {
@@ -7907,9 +7883,21 @@ function setupAppUi() {
       ? 'Return to flown-only view'
       : 'Show full track (disable fade)';
   }
+  // On: the whole track is drawn AND framed on one screen -- follow is
+  // paused so the camera doesn't snap back to the pilot. Off: follow
+  // returns to what it was, re-centring on the pilot.
+  let followBeforeFull = null;
   toggleFutureBtn.onclick = () => {
     state.showFuture = !state.showFuture;
     updateFutureBtn();
+    if (state.showFuture) {
+      followBeforeFull = state.follow;
+      if (state.follow) setFollow(false);
+      fitWholeTrackView();
+    } else if (followBeforeFull) {
+      followBeforeFull = null;
+      setFollow(true);
+    }
   };
   updateFutureBtn();
 
@@ -8302,7 +8290,7 @@ function centerOnPilotFrame(pos, dtMs) {
   // Nominal zoom bookkeeping. Wheel / pinch between our frames shows up
   // as a zoom differing from what we last applied -- absorb the delta so
   // manual zooming keeps working. After a gap the comparison may be
-  // stale (finale's fit zoom, pause), so skip absorption then -- UNLESS
+  // stale (a fitted overview, pause), so skip absorption then -- UNLESS
   // the user touched the camera during the gap (a mobile pinch pauses
   // follow via the tick's pinching guard; their new zoom must be kept,
   // not snapped back).
@@ -8384,6 +8372,11 @@ function centerOnPilotFrame(pos, dtMs) {
     lifted = true;
   }
   const eLng = _camEye.lng, eLat = _camEye.lat, eyeZ = _camEye.z;
+  // Still on the way to the drone pose? Keep frames coming even while
+  // paused (the paused tick otherwise renders once and idles), so a
+  // pause / stop mid-move never leaves the camera stranded part-way.
+  if (Math.hypot((target[0] - eLng) * mLon, (target[1] - eLat) * mLat,
+                 target[2] - eyeZ) > 0.5) renderDirty = true;
 
   // Centre = a point where the view ray from the eye meets MapLibre's own
   // terrain (the elevation it will render the centre at). Any such point
@@ -8552,10 +8545,9 @@ function chaseCamFrame(headingDeg, dtMs) {
 //                            dramatic action; orbit it tightly.
 //   glide                 -- mid-shot (zoom 13): far enough that the
 //                            upcoming terrain and line read clearly.
-//   finale  (last 60 s)   -- the camera lets go of the pilot, drifts to
-//                            the whole track's centre and pulls back
-//                            until the full flight fits: a long closing
-//                            overview of everything that was flown.
+//   (no closing overview: the camera stays on the pilot to the last fix,
+//    and playback stops there -- the whole track is one click away on
+//    the "Show full track" button.)
 //
 // Anti-judder design (the naive version steered onto the instantaneous
 // pilot heading every frame, which whips the camera around during every
@@ -8566,11 +8558,11 @@ function chaseCamFrame(headingDeg, dtMs) {
 //     displaced less than ~100 m in that window they are circling, so the
 //     camera holds its bearing instead of steering.
 //   * thermal <-> glide switches only commit after the new phase has
-//     persisted for 8 s of flight time; intro / finale are hard time
-//     boundaries and switch immediately.
+//     persisted for 8 s of flight time; the intro is a hard time
+//     boundary and switches immediately.
 //   * Bearing pans are rate-limited to 10 deg/s of real time; pitch,
-//     zoom and (in the finale) centre all move on slow exponential
-//     eases, so every transition reads as one deliberate camera move.
+//     and zoom move on slow exponential eases, so every transition
+//     reads as one deliberate camera move.
 function directorThermalAt(ms) {
   for (const th of thermals) {
     if (tMs[th.i0] > ms) break;
@@ -8591,8 +8583,7 @@ function directorCourseAt(ms, windowMs) {
 }
 // Per-phase framing: the whole middle of the flight stays CLOSE --
 // thermalling just a touch tighter than gliding -- so the pilot's actual
-// motion over the ground always reads; only the finale pulls back to the
-// full-track wide shot. All values live in state (Director-camera
+// motion over the ground always reads. All values live in state (Director-camera
 // settings section) with these behaviours as the factory defaults.
 // Viewport pull-back: the configured zooms were tuned on a desktop-sized
 // map, where they show a comfortable stretch of track. A phone shows the
@@ -8621,24 +8612,22 @@ function dirTrackAdjust() {
 function dirZoomFor(phase) {
   const z = phase === 'intro' ? state.dirZoomIntro
           : phase === 'thermal' ? state.dirZoomThermal
-          : phase === 'glide' ? state.dirZoomGlide : null;   // finale: auto fit
+          : state.dirZoomGlide;
   return z == null ? null : z + dirZoomAdjust() + dirTrackAdjust();
 }
 function dirPitchFor(phase) {
   return phase === 'intro' ? state.dirPitchIntro
        : phase === 'thermal' ? state.dirPitchThermal
-       : phase === 'glide' ? state.dirPitchGlide : state.dirPitchFinale;
+       : state.dirPitchGlide;
 }
 let _dirPhase = 'glide';        // committed phase
 let _dirCandidate = null;       // phase waiting out the hysteresis window
 let _dirCandidateMs = 0;        // flight time when the candidate appeared
 let _dirLastMs = -1;            // to detect seeks / scrubs
-let _dirFitCam = null;          // {center, zoom} framing the whole track,
-                                //   computed on entering the finale
 // Manual-zoom respect: the zoom as WE last left it (frame end), a user
 // override captured when the next frame starts at a different zoom, and
 // the phase/shot segment the override belongs to -- it clears when a new
-// segment (next thermal, glide, shot, finale...) begins.
+// segment (next thermal, glide, shot...) begins.
 let _dirZoom = null;            // Director's eased NOMINAL zoom (distance
                                 //   to pilot; the drone camera applies it)
 let _dirSetZoom = null;
@@ -8652,12 +8641,10 @@ let _dirLastSeg = null;
 // once stale, so the choreography returns on the next natural cut.
 const DIR_ZOOM_HOLD_MS = 45000;
 function directorPhaseFor(ms) {
-  // Short flights: scale the bookend phases down so a 4-minute soar isn't
-  // one third intro + finale (finale <=20% of the flight, intro <=8%).
+  // Short flights: scale the intro down so a 4-minute soar isn't mostly
+  // intro (intro <= 8% of the flight).
   const durS = Math.max(1, (T1 - T0) / 1000);
-  const finS = Math.min(state.dirFinaleSec, durS * 0.20);
   const intS = Math.min(state.dirIntroSec, durS * 0.08);
-  if ((T1 - ms) / 1000 < finS) return 'finale';
   if ((ms - T0) / 1000 < intS) return 'intro';
   return directorThermalAt(ms) ? 'thermal' : 'glide';
 }
@@ -8689,24 +8676,94 @@ function dirSteerToCourse(ms, dtMs) {
   const maxStep = 10 * dtMs / 1000;              // ≤10 deg/s pan
   map.setBearing(cur + Math.max(-maxStep, Math.min(maxStep, eased)));
 }
-// Camera that frames the entire track with some margin. cameraForBounds
-// computes for pitch 0; a tilted view sees further, so the result is
-// safely conservative. The -0.3 keeps a breathing edge around the track.
-function directorFitCam() {
+// "Show full track": frame the entire flight on one screen. The fit is
+// solved on a CLONE of MapLibre's transform -- the live camera is not
+// touched until the result is known -- by projecting sampled fixes AT
+// THEIR FLIGHT ALTITUDE and stepping the zoom out (re-centring each step)
+// until every point lands inside the visible area, clear of the screen
+// edges and the transport bar. cameraForBounds alone fits a flat,
+// top-down box, which at a tilted pitch cuts off the near end of the
+// track and anything flown high. Then one smooth move to that view.
+function fitWholeTrackView() {
+  if (!map || N === 0) return;
+  const el = map.getContainer();
+  const w = el.clientWidth, h = el.clientHeight;
+  if (w < 50 || h < 50) return;
+  const bar = document.getElementById('bottomBar');
+  const barTop = bar && bar.offsetParent
+    ? bar.getBoundingClientRect().top - el.getBoundingClientRect().top : h;
+  const sx0 = 40, sx1 = w - 40, sy0 = 50, sy1 = Math.max(sy0 + 50, Math.min(h - 30, barTop - 20));
+  // The solve can't know the terrain height the renderer will use under
+  // a not-yet-loaded centre: aim a few percent inside the safe area, then
+  // verify against the real render once the move lands (below).
+  const ix = (sx1 - sx0) * 0.04, iy = (sy1 - sy0) * 0.04;
+  const fx0 = sx0 + ix, fx1 = sx1 - ix, fy0 = sy0 + iy, fy1 = sy1 - iy;
+  const pitch = Math.min(map.getPitch(), 50), bearing = map.getBearing();
+  const step = Math.max(1, Math.floor(N / 240));
+  const pts = [];
+  for (let i = 0; i < N; i += step) pts.push(fixes[i]);
+  pts.push(fixes[N - 1]);
+  const merc = pts.map(f => [maplibregl.MercatorCoordinate.fromLngLat([f.lon, f.lat]),
+                             altDisplay(f)]);
+  let center = maplibregl.LngLat.convert([(lonMin + lonMax) / 2, (latMin + latMax) / 2]);
+  let zoom;
   try {
-    const cam = map.cameraForBounds(
-      [[lonMin, latMin], [lonMax, latMax]], { padding: 60 });
-    if (cam && isFinite(cam.zoom)) {
-      return { center: cam.center, zoom: Math.max(8, cam.zoom - 0.3) };
+    const cam = map.cameraForBounds([[lonMin, latMin], [lonMax, latMax]], { padding: 40, bearing });
+    // Start closer than the flat fit (a tilted view foreshortens the
+    // track) and step out until it fits: the tightest zoom that works.
+    zoom = cam && isFinite(cam.zoom) ? cam.zoom + 1.5 : map.getZoom();
+  } catch (_) { zoom = map.getZoom(); }
+  const tr = map.transform.clone();
+  const terr = map.terrain;
+  const elevAt = c => {
+    try { return terr ? terr.getElevationForLngLatZoom(c, tr.tileZoom) : 0; } catch (_) { return 0; }
+  };
+  tr.pitch = pitch; tr.bearing = bearing;
+  for (let iter = 0; iter < 80; iter++) {
+    tr.zoom = zoom; tr.center = center; tr.elevation = elevAt(center);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [c, z] of merc) {
+      const q = tr.coordinatePoint(c, z);
+      if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x;
+      if (q.y < y0) y0 = q.y; if (q.y > y1) y1 = q.y;
     }
-  } catch (_) { /* fall through */ }
-  return { center: map.getCenter(), zoom: Math.max(8, map.getZoom() - 1.5) };
+    // Re-centre: move the track's screen box onto the safe area's centre.
+    const dx = (x0 + x1) / 2 - (fx0 + fx1) / 2, dy = (y0 + y1) / 2 - (fy0 + fy1) / 2;
+    const fits = x1 - x0 <= fx1 - fx0 && y1 - y0 <= fy1 - fy0;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+      const cp = tr.centerPoint.clone();
+      cp.x += dx; cp.y += dy;
+      const nc = tr.pointLocation(cp);
+      if (nc && isFinite(nc.lng) && isFinite(nc.lat)) center = nc;
+    }
+    if (fits && Math.abs(dx) <= 2 && Math.abs(dy) <= 2) break;
+    if (!fits) zoom -= 0.08;
+  }
+  map.easeTo({ center, zoom, pitch, bearing, duration: 900 });
+  // Verify on the real render (deck.gl's viewport = what is on screen);
+  // step out a little while any sampled fix is still outside the safe area.
+  let tries = 0;
+  const verify = () => {
+    if (!state.showFuture || tries++ >= 6) return;
+    const dk = overlay && overlay._deck;
+    const vp = dk && dk.viewManager && dk.viewManager.getViewports()[0];
+    if (!vp || !vp.project) return;
+    let out = 0;
+    for (const f of pts) {
+      const q = vp.project([f.lon, f.lat, altDisplay(f)]);
+      if (!q || q[0] < sx0 || q[0] > sx1 || q[1] < sy0 || q[1] > sy1) out++;
+    }
+    if (out) {
+      map.once('moveend', () => setTimeout(verify, 50));
+      map.easeTo({ zoom: map.getZoom() - 0.2, duration: 250 });
+    }
+  };
+  map.once('moveend', () => setTimeout(verify, 50));
 }
 function directorCamFrame(headingDeg, dtMs) {
   if (!map || N === 0) return;
   const ms = state.currentMs;
   const want = directorPhaseFor(ms);
-  const prevPhase = _dirPhase;
   // A manual pinch / wheel between frames is absorbed into the drone
   // camera's NOMINAL zoom (centerOnPilotFrame); if that nominal moved
   // away from the nominal we last set, the user re-framed -- keep
@@ -8725,8 +8782,8 @@ function directorCamFrame(headingDeg, dtMs) {
     _dirPhase = want; _dirCandidate = null;
     _dirZoomOverride = null; _dirSetZoom = null; _dirZoom = null;
   } else if (want !== _dirPhase) {
-    if (want === 'intro' || want === 'finale') {
-      _dirPhase = want; _dirCandidate = null;   // hard time boundaries
+    if (want === 'intro') {
+      _dirPhase = want; _dirCandidate = null;   // hard time boundary
     } else if (_dirCandidate !== want) {
       _dirCandidate = want; _dirCandidateMs = ms;
     } else if (ms - _dirCandidateMs >= 8000) {
@@ -8736,14 +8793,11 @@ function directorCamFrame(headingDeg, dtMs) {
     _dirCandidate = null;
   }
   _dirLastMs = ms;
-  if (_dirPhase === 'finale' && (prevPhase !== 'finale' || !_dirFitCam)) {
-    _dirFitCam = directorFitCam();
-  }
 
   suppressMoveDirty = true;
   const shot = dirShotAt(ms);
   // New segment (a different shot, or a phase flip -- next thermal, the
-  // glide after it, the finale...) releases the manual-zoom override,
+  // glide after it...) releases the manual-zoom override,
   // but only once it has gone stale: a fresh zoom-in survives the next
   // boundary so the user can actually look at what they zoomed in on.
   const seg = shot || _dirPhase;
@@ -8774,41 +8828,21 @@ function directorCamFrame(headingDeg, dtMs) {
     zoomTarget = dirZoomFor('thermal'); pitchTarget = dirPitchFor('thermal');
     map.setBearing(map.getBearing()
       + Math.max(3, state.orbitSpeedDeg) * dtMs / 1000);
-  } else if (_dirPhase === 'glide') {
+  } else {
     // Glide: pan slowly onto the smoothed course over ground.
     zoomTarget = dirZoomFor('glide'); pitchTarget = dirPitchFor('glide');
     dirSteerToCourse(ms, dtMs);
-  } else {
-    // Finale: release the pilot, drift the frame onto the whole track
-    // (tick skips centerOnPilotFrame in this phase) with a slow pan.
-    zoomTarget = _dirFitCam ? _dirFitCam.zoom : null;
-    pitchTarget = dirPitchFor('finale');
-    map.setBearing(map.getBearing() + 3 * dtMs / 1000);
-    if (_dirFitCam) {
-      const c = map.getCenter();
-      const k = Math.min(1, dtMs / 2000);
-      map.setCenter([
-        c.lng + (_dirFitCam.center.lng - c.lng) * k,
-        c.lat + (_dirFitCam.center.lat - c.lat) * k,
-      ]);
-    }
   }
   // Distance: ease toward the framing zoom of the shot / phase, unless
-  // the user pinned their own zoom for this segment. Outside the finale
-  // the zoom is NOT written to the map here -- it feeds the drone-follow
-  // camera as its nominal "distance to pilot", which converts it to the
-  // terrain-compensated applied zoom (centerOnPilotFrame). In the finale
-  // the follow camera is released, so the fit zoom is applied directly.
+  // the user pinned their own zoom for this segment. The zoom is NOT
+  // written to the map here -- it feeds the drone-follow camera as its
+  // nominal "distance to pilot", which converts it to the
+  // terrain-compensated applied zoom (centerOnPilotFrame).
   if (_dirZoomOverride != null) zoomTarget = _dirZoomOverride;
   if (zoomTarget != null) {
     if (_dirZoom == null || !isFinite(_dirZoom)) _dirZoom = zoomTarget;
     _dirZoom += (zoomTarget - _dirZoom) * Math.min(1, dtMs / 2500);
-    if (_dirPhase === 'finale' && !shot) {
-      const z = map.getZoom();
-      if (Math.abs(_dirZoom - z) > 0.02) map.setZoom(_dirZoom);
-    } else {
-      camNominalZoom = _dirZoom;
-    }
+    camNominalZoom = _dirZoom;
   }
   _dirSetZoom = _dirZoom;        // frame-end nominal: next frame compares
   const p = map.getPitch();
@@ -8947,7 +8981,7 @@ function loadFlight(newFixes, filename, opts) {
   chartXRange = null;         // reset any chart zoom
   loopAMs = 0; loopBMs = 0;   // A-B loop belongs to the previous flight
   _dirPhase = 'glide'; _dirCandidate = null;   // Director state belongs to
-  _dirLastMs = -1; _dirFitCam = null;          //   the previous flight too
+  _dirLastMs = -1;                             //   the previous flight too
   _dirZoomOverride = null; _dirSetZoom = null; _dirLastSeg = null;
   _dirZoom = null; camNominalZoom = null; _camLastApplied = null;
   _camTrim = 0; _camEye = null; _camArm = 1; _camS = null;
