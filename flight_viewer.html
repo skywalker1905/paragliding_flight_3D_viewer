@@ -5182,6 +5182,73 @@ function pilotHeading(ms) {
   }
   return bearingDeg(a[1], a[0], b[1], b[0]);
 }
+// ---------------------------------------------------------------------------
+// Playback-speed-aware camera input.
+//
+// Every camera smoothing constant used to be fixed in REAL time while the
+// signals it smooths -- pilot position, heading, course, thermal/glide
+// phase -- are sampled on the FLIGHT timeline. At Nx playback a fixed
+// 140 ms of smoothing covers only 0.14*N s of flight... and every wiggle
+// of the track (thermal circles, GPS noise at the fix rate) reaches the
+// screen N times faster. Measured on a 3 h XC log, 1440x860, 60 fps:
+// chase camera at 20x shook 19 px (p90, frame-to-frame) and swayed 63 px;
+// director/centre swayed 7-10 px at 20-60x.
+//
+// So the camera follows a TARGET that is the pilot path smoothed over a
+// window proportional to playback speed (a constant ~0.45 s of WATCHING
+// time): a centred Gaussian average over the known track -- no lag, it
+// just stops the camera from tracing every circle. The pilot marker itself
+// still sits on the real track. Paused, the window shrinks to zero so the
+// camera settles exactly on the pilot.
+// ---------------------------------------------------------------------------
+const CAM_SMOOTH_REAL_S = 0.45;   // Gaussian sigma, seconds of real time
+const CAM_SMOOTH_MAX_MS = 45000;  // cap (flight ms) for very fast playback
+let _camSigmaMs = 0;              // current sigma (flight ms), eased
+function camSpeedEff() { return state.playing ? Math.max(1, state.speed) : 1; }
+// Ease the window toward its speed-dependent size; returns true while it
+// is still changing (keeps paused frames flowing until it has settled).
+function updateCamSigma(dtMs) {
+  const want = state.playing
+    ? Math.min(CAM_SMOOTH_MAX_MS, CAM_SMOOTH_REAL_S * 1000 * Math.max(1, state.speed))
+    : 0;
+  const k = 1 - Math.exp(-(dtMs || 16.7) / 400);
+  _camSigmaMs += (want - _camSigmaMs) * k;
+  if (Math.abs(want - _camSigmaMs) < 5) _camSigmaMs = want;   // (exponential approach never lands exactly)
+  return _camSigmaMs !== want;
+}
+function cameraTargetAt(ms) {
+  const sig = _camSigmaMs;
+  if (!(sig > 20) || N < 2) return pilotAt(ms);
+  let x = 0, y = 0, z = 0, wsum = 0;
+  for (let k = -10; k <= 10; k++) {
+    const u = k / 4;                       // +/-2.5 sigma, 21 taps
+    const w = Math.exp(-0.5 * u * u);
+    const p = pilotAt(ms + u * sig);
+    x += p[0] * w; y += p[1] * w; z += p[2] * w; wsum += w;
+  }
+  return [x / wsum, y / wsum, z / wsum];
+}
+// Heading for the chase camera: the CHORD of a centred window -- for
+// circular motion a centred chord is parallel to the tangent, so there is
+// no lag -- over ~1.5 s of watching time. When the window covers a large
+// part of a circle (thermalling at speed) the chord is short relative to
+// the path flown: return null and let the camera hold its bearing instead
+// of spinning with every turn.
+function cameraCourseAt(ms) {
+  const half = Math.max(150, 750 * camSpeedEff());
+  const a = pilotAt(ms - half), b = pilotAt(ms + half);
+  const mLon = 111320 * Math.cos(b[1] * Math.PI / 180) || 1;
+  const hd = (p, q) => Math.hypot((q[0] - p[0]) * mLon, (q[1] - p[1]) * 111320);
+  const chord = hd(a, b);
+  let path = 0, prev = a;
+  for (let k = 1; k <= 8; k++) {
+    const q = pilotAt(ms - half + (2 * half) * k / 8);
+    path += hd(prev, q); prev = q;
+  }
+  if (chord < 3 || chord < 0.5 * path) return null;
+  return bearingDeg(a[1], a[0], b[1], b[0]);
+}
+
 function findIdx(ms) {
   if (N === 0) return 0;
   if (ms <= T0) return 0;
@@ -6236,14 +6303,17 @@ function tick(nowMs) {
         // would cancel the two-finger gesture on the very frame it forms.
         const pinching = window._activeTouchCount
           && window._activeTouchCount() >= 2;
+        if (pinching) camReleaseElevation();   // the gesture owns the camera
         if (!pinching) {
-          centerOnPilotFrame(pos, dt);
+          const sigMoving = updateCamSigma(dt);
+          centerOnPilotFrame(cameraTargetAt(state.currentMs), dt);
+          if (sigMoving && !state.playing) renderDirty = true;   // settle on the pilot
           if (!dragActive()) {
             // Chase steers only while playing (a paused user can drag
             // freely). Orbit keeps circling even while paused -- slowly
             // sweeping the 3-D track is the whole point of the mode.
             if (state.camStyle === 'chase' && state.playing) {
-              chaseCamFrame(head, dt);
+              chaseCamFrame(cameraCourseAt(state.currentMs), dt);
             } else if (state.camStyle === 'director' && state.playing
                 && nowMs - lastUserCamMs > state.orbitResumeSec * 1000) {
               // Director resumes after manual drags exactly like Orbit.
@@ -6718,7 +6788,7 @@ function setupAppUi() {
     document.getElementById('followCam').checked = on;
     const btn = document.getElementById('btnFollow');
     if (btn) btn.classList.toggle('active', on);
-    if (!on) dragState = null;
+    if (!on) { dragState = null; camReleaseElevation(); }
     refreshMapDragHandlers();
   }
   window._setFollowPilot = setFollow;
@@ -8262,6 +8332,7 @@ function mlMPerPx(lat, z) {
 // height). Returns the zoom change so the follow camera can discount it.
 function releaseStuckElevationFreeze() {
   if (!map || !map._elevationFreeze || !map.terrain) return 0;
+  if (_camFrozeElev) return 0;          // the follow camera holds it on purpose
   if ((map.isEasing && map.isEasing())
       || (map.handlers && map.handlers.isMoving && map.handlers.isMoving())) return 0;
   const z0 = map.getZoom();
@@ -8270,6 +8341,30 @@ function releaseStuckElevationFreeze() {
     else map._elevationFreeze = false;
   } catch (_) { map._elevationFreeze = false; }
   return map.getZoom() - z0;
+}
+
+// The follow camera pins MapLibre's centre elevation. MapLibre renders the
+// eye at transform.elevation + cameraToCenterDistance * cos(pitch), and
+// re-reads transform.elevation from the terrain under the centre on every
+// render. That read can differ from the one the camera was solved with --
+// at speed the DEM under the centre switches resolution between solve and
+// render (parent tile -> finer tile), 20-30 m in mountains -- and the
+// rendered eye jumped by that much for a frame (measured: up to 73 m away
+// from the planned eye, 40-100 m single-frame accelerations at 120x).
+// Freezing the elevation and setting it to exactly the solved value makes
+// the rendered eye the planned eye. Released whenever follow is not
+// steering the camera.
+let _camFrozeElev = false;
+function camReleaseElevation() {
+  if (!_camFrozeElev || !map) return;
+  _camFrozeElev = false;
+  if (map.isEasing && map.isEasing()) return;      // MapLibre owns it now
+  map._elevationFreeze = false;
+  try {
+    if (map.terrain) map.transform.elevation =
+      map.terrain.getElevationForLngLatZoom(map.transform.center, map.transform.tileZoom);
+  } catch (_) {}
+  map.triggerRepaint();
 }
 
 function centerOnPilotFrame(pos, dtMs) {
@@ -8357,11 +8452,9 @@ function centerOnPilotFrame(pos, dtMs) {
     } catch (_) {}
     _camEye = start || { lng: target[0], lat: target[1], z: target[2] };
   }
-  // Longer at fast playback: the pilot crosses ~speed fixes per second and
-  // any residual GPS wobble reaches the screen speed-times faster. The
-  // added lag is a few dozen metres even at 10x.
-  const tauEye = 140 * Math.min(3, Math.sqrt(state.playing ? Math.max(1, state.speed) : 1));
-  const k = 1 - Math.exp(-dt / tauEye);
+  // (Speed-dependent smoothing lives in the camera TARGET -- see
+  // cameraTargetAt -- so this stays a short constant catch-up.)
+  const k = 1 - Math.exp(-dt / 140);
   _camEye.lng += (target[0] - _camEye.lng) * k;
   _camEye.lat += (target[1] - _camEye.lat) * k;
   _camEye.z   += (target[2] - _camEye.z) * k;
@@ -8505,8 +8598,18 @@ function centerOnPilotFrame(pos, dtMs) {
   }
 
   if (isFinite(cLng) && isFinite(cLat) && isFinite(zA) && Math.abs(cLat) < 85) {
+    // Centre elevation = the ray's height at the final centre distance, so
+    // MapLibre's eye lands exactly on (eLng, eLat, eyeZ).
+    const sFinal = ctcdPx * mlMPerPx(cLat, zA);
+    const eCentre = eyeZ - sFinal * cosP;
+    const pin = !!terr && isFinite(eCentre);
     suppressMoveDirty = true;
+    if (pin) {
+      map._elevationFreeze = true; _camFrozeElev = true;
+      t.elevation = eCentre;           // before jumpTo: its inside-terrain check uses it
+    }
     map.jumpTo({ center: [cLng, cLat], zoom: zA });
+    if (pin) map.transform.elevation = eCentre;
     suppressMoveDirty = false;
     // What MapLibre actually applied (it may nudge zoom, e.g. lifting a
     // camera it judges inside terrain) -- so only real wheel / pinch
@@ -8521,17 +8624,23 @@ function dragActive() {
 }
 
 
-// Chase-cam: exponentially ease the camera bearing toward the direction of
-// flight. The rate constant gives ~0.7 s to close most of the gap -- fast
-// enough to feel attached, slow enough not to whip around in thermals.
+// Chase-cam: turn the camera toward the direction of flight. The turn
+// RATE is what gets smoothed (a damped spring: target rate ~1.5x the
+// remaining angle per second, eased over 300 ms, capped at 45 deg/s), so
+// the rotation starts and stops without jolts -- with a direct ease plus a
+// hard rate cap, every course change was a step in angular velocity, seen
+// as shake at fast playback. headingDeg null = hold (circling).
+let _chaseRate = 0;               // deg/s of real time
 function chaseCamFrame(headingDeg, dtMs) {
   if (!map) return;
+  const dt = Math.min(100, dtMs || 16.7);
   const cur = map.getBearing();
-  let d = ((headingDeg - cur + 540) % 360) - 180;
-  if (Math.abs(d) < 0.05) return;
-  const k = Math.min(1, dtMs * 0.0015);
+  const d = headingDeg == null ? 0 : ((headingDeg - cur + 540) % 360) - 180;
+  const want = Math.max(-45, Math.min(45, d * 1.5));
+  _chaseRate += (want - _chaseRate) * (1 - Math.exp(-dt / 300));
+  if (Math.abs(_chaseRate) < 0.01 && Math.abs(d) < 0.05) { _chaseRate = 0; return; }
   suppressMoveDirty = true;
-  map.setBearing(cur + d * k);
+  map.setBearing(cur + _chaseRate * dt / 1000);
   suppressMoveDirty = false;
 }
 
@@ -8554,12 +8663,13 @@ function chaseCamFrame(headingDeg, dtMs) {
 // wing-over and spins it wildly in any circling the thermal detector
 // missed):
 //   * The glide bearing target is the COURSE OVER GROUND across the last
-//     15 s of flight -- immune to short heading wiggles. If the pilot
-//     displaced less than ~100 m in that window they are circling, so the
-//     camera holds its bearing instead of steering.
+//     15 s of flight (longer at fast playback: >= 2.5 s of watching time)
+//     -- immune to short heading wiggles. If the pilot displaced less than
+//     ~100 m in that window they are circling, so the camera holds its
+//     bearing instead of steering.
 //   * thermal <-> glide switches only commit after the new phase has
-//     persisted for 8 s of flight time; the intro is a hard time
-//     boundary and switches immediately.
+//     persisted for 8 s of flight time (and >= 2 s of watching time); the
+//     intro is a hard time boundary and switches immediately.
 //   * Bearing pans are rate-limited to 10 deg/s of real time; pitch,
 //     and zoom move on slow exponential eases, so every transition
 //     reads as one deliberate camera move.
@@ -8667,7 +8777,8 @@ function dirShotAt(ms) {
 // Shared by the glide phase and 'follow' shots: pan slowly onto the
 // smoothed course over ground, rate-limited; hold bearing while circling.
 function dirSteerToCourse(ms, dtMs) {
-  const course = directorCourseAt(ms, 15000);
+  // >= 15 s of flight, or ~2.5 s of watching time at fast playback.
+  const course = directorCourseAt(ms, Math.max(15000, 2500 * camSpeedEff()));
   if (course == null) return;    // circling -- hold the bearing
   const cur = map.getBearing();
   let d = ((course - cur + 540) % 360) - 180;
@@ -8786,7 +8897,9 @@ function directorCamFrame(headingDeg, dtMs) {
       _dirPhase = want; _dirCandidate = null;   // hard time boundary
     } else if (_dirCandidate !== want) {
       _dirCandidate = want; _dirCandidateMs = ms;
-    } else if (ms - _dirCandidateMs >= 8000) {
+    } else if (ms - _dirCandidateMs >= Math.max(8000, 2000 * camSpeedEff())) {
+      // (>= 8 s of flight, and >= 2 s of watching time: at fast playback
+      // a fixed 8 s flipped thermal/glide framing several times a second)
       _dirPhase = want; _dirCandidate = null;
     }
   } else {
