@@ -6372,9 +6372,13 @@ function tick(nowMs) {
           && window._activeTouchCount() >= 2;
         if (pinching) camReleaseElevation();   // the gesture owns the camera
         if (!pinching) {
-          const sigMoving = updateCamSigma(dt);
-          centerOnPilotFrame(cameraTargetAt(state.currentMs), dt);
-          if (sigMoving && !state.playing) renderDirty = true;   // settle on the pilot
+          // Steer FIRST (bearing / pitch / framing distance), then solve
+          // the camera position for that pose. MapLibre turns the view
+          // about the map CENTRE -- a ray hit kilometres beyond the pilot
+          // -- so turning after the solve threw the rendered eye sideways
+          // by (centre distance x this frame's turn): ~10-30 m per frame
+          // while circling in a thermal at 1x, varying with frame pacing
+          // = visible shake (chase cam worst, director/orbit milder).
           if (!dragActive()) {
             // Chase steers only while playing (a paused user can drag
             // freely). Orbit keeps circling even while paused -- slowly
@@ -6396,6 +6400,9 @@ function tick(nowMs) {
               renderDirty = true;   // keep frames flowing while paused
             }
           }
+          const sigMoving = updateCamSigma(dt);
+          centerOnPilotFrame(cameraTargetAt(state.currentMs), dt);
+          if (sigMoving && !state.playing) renderDirty = true;   // settle on the pilot
         }
       }
       syncProgressUi();
