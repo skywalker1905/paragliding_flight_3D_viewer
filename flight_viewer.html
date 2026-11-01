@@ -4521,7 +4521,7 @@ function segmentAlpha(tStart, tEnd, nowOverride) {
   if (state.showFuture) return 255;
   // nowOverride lets comparison tracks evaluate the same rules on their
   // own (takeoff-aligned) clock.
-  const now = nowOverride == null ? state.currentMs : nowOverride;
+  const now = nowOverride == null ? trackNowMs() : nowOverride;
   if (tEnd <= now) {
     const ageSec = (now - tEnd) / 1000;
     return holdFadeAlpha(ageSec, state.trackHoldSec, state.trailFadeSec,
@@ -4564,11 +4564,10 @@ function getPathData() {
 // (sub+1) splineSample calls (typically 7 with sub=6).
 function buildTipData(data) {
   if (state.showFuture || N < 2) return null;
-  const now = state.currentMs;
-  if (!(now > tMs[0] && now < tMs[N - 1])) return null;
-  const iCur = findIdx(now);
+  if (!(state.currentMs > tMs[0] && state.currentMs < tMs[N - 1])) return null;
+  const pc = pilotSegAt(state.currentMs);  // same clock as pilotAt()
+  const iCur = pc.j, uMax = pc.u, now = pc.te;
   if (iCur < 0 || iCur >= N - 1) return null;
-  const uMax = segU(iCur, now);       // same time warp as pilotAt()
   if (!(uMax > 1e-6)) return null;
   const sub = effSubdiv(N);
   const tipSub = Math.max(1, Math.ceil(sub * uMax));
@@ -4643,7 +4642,8 @@ function visibleFadeRange(data, now, holdSec, fadeSec, enabled, includeBoundary)
 // multi-second fades and drops the per-frame attribute churn.
 function fadeColorClock(enabled) {
   if (state.showFuture) return -1;
-  return enabled ? Math.round(state.currentMs / 250) : findIdx(state.currentMs);
+  const now = trackNowMs();
+  return enabled ? Math.round(now / 250) : findIdx(now);
 }
 const _mainSliceCache = { data: null, first: -2, last: -2, arr: [] };
 const _curtainSliceCache = { data: null, first: -2, last: -2, arr: [] };
@@ -4659,7 +4659,7 @@ function buildPathLayers() {
   if (state.showFuture) {
     visible = data;
   } else {
-    const r = visibleFadeRange(data, state.currentMs, state.trackHoldSec,
+    const r = visibleFadeRange(data, trackNowMs(), state.trackHoldSec,
                                state.trailFadeSec, state.trackFadeOn, false);
     visible = stableSlice(_mainSliceCache, data, r.first, r.last);
   }
@@ -4852,7 +4852,7 @@ function buildCurtainLayers() {
   // The curtain reveals with playback and fades on its OWN hold/fade
   // window (state.curtainHoldSec / state.curtainFadeSec), gated by its own
   // state.curtainFadeOn switch -- entirely independent of the track fade.
-  const now = state.currentMs;
+  const now = trackNowMs();
   const alphaOf = d => {
     if (state.showFuture) return 255;
     if (d.tStart <= now && d.tEnd > now) return 255;   // current segment
@@ -5076,85 +5076,151 @@ function pushLayers(pilotPos, heading) {
 // ============================================================================
 //  Pilot interpolation
 // ============================================================================
-// Time -> spline parameter inside segment i (fix i .. i+1), with the
-// pilot's SPEED continuous across fixes.
+// Pilot clock: WHERE along the track the pilot is at playback time ms.
 //
-// Plain u = (ms - t_i) / dt keeps the pilot at a constant pace inside each
-// segment, so the speed jumps at every fix (each segment has its own
-// length / duration, and the spline's dP/du differs either side of a
-// knot). Measured on a Syride log (mixed 1 s / 2 s fixes, ~11 m/s ground
-// speed): median jump 1.3 m/s, 10 % over 4 m/s. The follow camera is glued
-// to the pilot, so every jump shook the whole map -- once per fix, i.e.
-// 10x per second at 10x playback, and 10x larger on screen.
+// The pilot used to pass every fix exactly at its timestamp. GPS position
+// noise makes consecutive fix spacings differ by ~10 %, so the pilot had
+// to speed up and slow down at every fix to stay on schedule, and inside
+// a segment the spline parameter is not proportional to distance either.
+// Measured on a Flymaster log: pilot speed off its 2 s average by 3-4 %
+// median, >8-11 % 10 % of the time -- a once-per-fix surge, invisible at
+// fast playback but an obvious pulse at 1x and slower, the follow view
+// pulsing with it. A duplicated timestamp (two fixes, same second, 8 m
+// apart) even made the pilot jump.
 //
-// Instead each segment gets a cubic Hermite time warp u(tau) with u(0)=0,
-// u(1)=1 and end slopes chosen so the speed at each fix equals the mean
-// of the two adjoining segments' average speeds; Fritsch-Carlson scaling
-// keeps u monotonic (the pilot never runs backwards). Horizontal metres
-// only, so the terrain exaggeration setting doesn't change the timing.
-let _tw = null;   // per-segment cache: horizontal length and |dP/du| at both ends
-function _twData() {
+// Now the cumulative distance flown, S(t), is smoothed with a ~1 s
+// Gaussian (blended back to exact over the first/last few seconds, so the
+// flight still starts on takeoff and ends on the last fix), interpolated
+// with a monotone cubic (C1 speed, never backwards), and the arc position
+// is mapped to the spline by true arc length. The pilot stays exactly on
+// the drawn line; it just passes each fix up to a few tenths of a second
+// off its timestamp. The trail tip, flown/unflown split and curtain use
+// the same clock (trackNowMs), so the line still ends under the pilot.
+// Horizontal metres only (terrain exaggeration doesn't change timing).
+const PILOT_CLOCK_SIGMA_MS = 1000;
+let _pc = null;
+function pilotClockData() {
   const key = `${state.smoothSubdiv}|${state.smoothTension}`;
-  if (!_tw || _tw.fx !== fixes || _tw.key !== key || _tw.len.length !== N) {
-    _tw = { fx: fixes, key, len: new Float64Array(N).fill(NaN),
-            d0: new Float64Array(N), d1: new Float64Array(N) };
+  if (_pc && _pc.fx === fixes && _pc.key === key && _pc.n === N) return _pc;
+  const n = N;
+  // Per-segment spline arc length, plus cumulative length at 8 sub-steps
+  // (for the arc-length -> spline-parameter mapping).
+  const L = new Float64Array(Math.max(1, n - 1));
+  const sub = new Float32Array(Math.max(1, n - 1) * 8);
+  for (let i = 0; i < n - 1; i++) {
+    const mLon = 111320 * Math.cos(fixes[i].lat * Math.PI / 180) || 1;
+    let acc = 0, prev = splineSample(i, 0);
+    for (let k = 1; k <= 8; k++) {
+      const q = splineSample(i, k / 8);
+      acc += Math.hypot((q[0] - prev[0]) * mLon, (q[1] - prev[1]) * 111320);
+      sub[i * 8 + k - 1] = acc; prev = q;
+    }
+    L[i] = acc;
   }
-  return _tw;
-}
-function _twSeg(i) {
-  const w = _twData();
-  if (Number.isNaN(w.len[i])) {
-    const mLon = 111320 * Math.cos(fixes[i].lat * Math.PI / 180);
-    const hd = (a, b) => Math.hypot((b[0] - a[0]) * mLon, (b[1] - a[1]) * 111320);
-    let L = 0, prev = splineSample(i, 0);
-    for (let k = 1; k <= 8; k++) { const q = splineSample(i, k / 8); L += hd(prev, q); prev = q; }
-    const e = 1e-3;
-    w.len[i] = L;
-    w.d0[i] = hd(splineSample(i, 0), splineSample(i, e)) / e;
-    w.d1[i] = hd(splineSample(i, 1 - e), splineSample(i, 1)) / e;
+  const S = new Float64Array(n);
+  for (let i = 1; i < n; i++) S[i] = S[i - 1] + L[i - 1];
+  // Unique timestamps (duplicates merged by averaging their distance).
+  const tu = [], su = [];
+  for (let i = 0; i < n; ) {
+    let k = i, acc = 0;
+    while (k < n && tMs[k] === tMs[i]) { acc += S[k]; k++; }
+    tu.push(tMs[i]); su.push(acc / (k - i)); i = k;
   }
-  return w;
+  const m = tu.length;
+  // Gaussian smoothing in time (spacing-weighted for irregular fix rates),
+  // blended back to the raw distance near both ends.
+  const sig = PILOT_CLOCK_SIGMA_MS, reach = 3 * sig;
+  const ss = new Float64Array(m);
+  let lo = 0, hi = 0;
+  for (let i = 0; i < m; i++) {
+    while (tu[i] - tu[lo] > reach) lo++;
+    while (hi + 1 < m && tu[hi + 1] - tu[i] <= reach) hi++;
+    let ws = 0, acc = 0;
+    for (let k = lo; k <= hi; k++) {
+      const d = (tu[k] - tu[i]) / sig;
+      const sp = (tu[Math.min(m - 1, k + 1)] - tu[Math.max(0, k - 1)]) / 2 || 1;
+      const w = Math.exp(-0.5 * d * d) * sp;
+      ws += w; acc += w * su[k];
+    }
+    const edge = Math.min(tu[i] - tu[0], tu[m - 1] - tu[i]) / reach;
+    const b = edge >= 1 ? 1 : edge <= 0 ? 0 : edge * edge * (3 - 2 * edge);
+    ss[i] = b * (acc / ws) + (1 - b) * su[i];
+  }
+  for (let i = 1; i < m; i++) if (ss[i] < ss[i - 1]) ss[i] = ss[i - 1];
+  // Fritsch-Carlson monotone cubic slopes.
+  const dk = new Float64Array(Math.max(1, m - 1));
+  for (let k = 0; k < m - 1; k++) dk[k] = (ss[k + 1] - ss[k]) / (tu[k + 1] - tu[k]);
+  const sl = new Float64Array(m);
+  if (m > 1) { sl[0] = dk[0]; sl[m - 1] = dk[m - 2]; }
+  for (let k = 1; k < m - 1; k++) sl[k] = (dk[k - 1] <= 0 || dk[k] <= 0) ? 0 : (dk[k - 1] + dk[k]) / 2;
+  for (let k = 0; k < m - 1; k++) {
+    if (dk[k] === 0) { sl[k] = 0; sl[k + 1] = 0; continue; }
+    const a = sl[k] / dk[k], bb = sl[k + 1] / dk[k], h = a * a + bb * bb;
+    if (h > 9) { const tt = 3 / Math.sqrt(h); sl[k] = tt * a * dk[k]; sl[k + 1] = tt * bb * dk[k]; }
+  }
+  _pc = { fx: fixes, key, n, L, sub, S, tu, ss, sl, lastMs: NaN, last: null };
+  return _pc;
 }
-function segU(i, ms) {
-  const t0 = tMs[i], t1 = tMs[Math.min(i + 1, N - 1)];
-  const dtMs = t1 - t0;
-  if (!(dtMs > 0)) return 0;
-  const tau = Math.max(0, Math.min(1, (ms - t0) / dtMs));
-  if (i <= 0 || i >= N - 2) return tau;
-  const w = _twSeg(i);
-  const L = w.len[i];
-  if (!(L > 0.5)) return tau;                     // standing still
-  const vSeg = j => {
-    if (j < 0 || j >= N - 1) return null;
-    const d = (tMs[j + 1] - tMs[j]) / 1000;
-    return d > 0 ? _twSeg(j).len[j] / d : null;
-  };
-  const v = L / (dtMs / 1000);
-  const vPrev = vSeg(i - 1), vNext = vSeg(i + 1);
-  const vLo = vPrev == null ? v : (vPrev + v) / 2;
-  const vHi = vNext == null ? v : (vNext + v) / 2;
-  const dt = dtMs / 1000;
-  let a = w.d0[i] > 1e-6 ? vLo * dt / w.d0[i] : 1;
-  let b = w.d1[i] > 1e-6 ? vHi * dt / w.d1[i] : 1;
-  a = Math.max(0, a); b = Math.max(0, b);
-  const r = a * a + b * b;
-  if (r > 9) { const k = 3 / Math.sqrt(r); a *= k; b *= k; }
-  const t2 = tau * tau, t3 = t2 * tau;
-  const u = (t3 - 2 * t2 + tau) * a + (-2 * t3 + 3 * t2) + (t3 - t2) * b;
-  return Math.max(0, Math.min(1, u));
+// {j, u, te}: segment, spline parameter, and the equivalent fix-schedule
+// time (for the flown/unflown split) of the pilot at playback time ms.
+function pilotSegAt(ms) {
+  const c = pilotClockData();
+  if (ms === c.lastMs) return c.last;
+  const { tu, ss, sl, S, L, sub } = c;
+  const m = tu.length;
+  let s;
+  if (m < 2 || ms <= tu[0]) s = ss[0];
+  else if (ms >= tu[m - 1]) s = ss[m - 1];
+  else {
+    let lo = 0, hi = m - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (tu[mid] <= ms) lo = mid; else hi = mid; }
+    const h = tu[hi] - tu[lo], x = (ms - tu[lo]) / h, x2 = x * x, x3 = x2 * x;
+    s = (2 * x3 - 3 * x2 + 1) * ss[lo] + (x3 - 2 * x2 + x) * h * sl[lo]
+      + (-2 * x3 + 3 * x2) * ss[hi] + (x3 - x2) * h * sl[hi];
+    s = Math.max(ss[lo], Math.min(ss[hi], s));
+  }
+  // Segment holding arc position s: last j with S[j] <= s, skipping
+  // zero-length segments (a stationary pilot) forward.
+  let j;
+  if (N < 2) j = 0;
+  else {
+    let lo = 0, hi = N - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (S[mid] <= s) lo = mid; else hi = mid; }
+    j = Math.min(lo, N - 2);
+    while (j < N - 2 && L[j] < 1e-6 && S[j + 1] <= s) j++;
+  }
+  let frac = L[j] > 1e-6 ? Math.max(0, Math.min(1, (s - S[j]) / L[j])) : 0;
+  if (s >= S[N - 1]) { j = Math.max(0, N - 2); frac = 1; }
+  // Arc fraction -> spline parameter through the 8-step arc table.
+  let u = frac;
+  if (L[j] > 1e-6) {
+    const target = frac * L[j];
+    let k = 0, prevA = 0;
+    while (k < 7 && sub[j * 8 + k] < target) { prevA = sub[j * 8 + k]; k++; }
+    const nextA = sub[j * 8 + k];
+    u = (k + (nextA > prevA ? (target - prevA) / (nextA - prevA) : 0)) / 8;
+    u = Math.max(0, Math.min(1, u));
+  }
+  const te = tMs[j] + frac * ((tMs[Math.min(j + 1, N - 1)] - tMs[j]) || 0);
+  c.lastMs = ms; c.last = { j, u, te };
+  return c.last;
+}
+// Playback time on the fix schedule, for anything that splits the track
+// into flown / unflown at the pilot (trail, tip, curtain).
+function trackNowMs() {
+  if (N < 2) return state.currentMs;
+  if (state.currentMs <= T0) return T0;
+  if (state.currentMs >= T1) return T1;
+  return pilotSegAt(state.currentMs).te;
 }
 function pilotAt(ms) {
   if (N === 0) return [0, 0, 0];
   if (ms <= T0) return [fixes[0].lon, fixes[0].lat, altDisplay(fixes[0])];
   if (ms >= T1) return [fixes[N-1].lon, fixes[N-1].lat, altDisplay(fixes[N-1])];
-  let lo = 0, hi = N - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (tMs[mid] <= ms) lo = mid; else hi = mid - 1;
-  }
   // Pilot rides the same spline that the rendered track follows so the
   // arrow always sits exactly on the visible line.
-  return splineSample(lo, segU(lo, ms));
+  const p = pilotSegAt(ms);
+  return splineSample(p.j, p.u);
 }
 // Heading = bearing from a point just before the pilot to a point just
 // after, sampled on the *same* trajectory pilotAt() uses (i.e. the spline
@@ -5230,12 +5296,13 @@ function cameraTargetAt(ms) {
 }
 // Heading for the chase camera: the CHORD of a centred window -- for
 // circular motion a centred chord is parallel to the tangent, so there is
-// no lag -- over ~1.5 s of watching time. When the window covers a large
+// no lag -- over ~1.5 s of watching time (>= 3 s of flight, so GPS wobble
+// at the fix rate can't swing the camera at 1x and slower). When the window covers a large
 // part of a circle (thermalling at speed) the chord is short relative to
 // the path flown: return null and let the camera hold its bearing instead
 // of spinning with every turn.
 function cameraCourseAt(ms) {
-  const half = Math.max(150, 750 * camSpeedEff());
+  const half = Math.max(1500, 750 * camSpeedEff());
   const a = pilotAt(ms - half), b = pilotAt(ms + half);
   const mLon = 111320 * Math.cos(b[1] * Math.PI / 180) || 1;
   const hd = (p, q) => Math.hypot((q[0] - p[0]) * mLon, (q[1] - p[1]) * 111320);
