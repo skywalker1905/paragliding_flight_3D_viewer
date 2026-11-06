@@ -4321,6 +4321,54 @@ function initMap() {
   // under the centre frozen (see releaseStuckElevationFreeze).
   map.on('moveend', () => setTimeout(releaseStuckElevationFreeze, 0));
 
+  // MapLibre bug workaround (4.7.1, unchanged through 5.x): with 3-D terrain,
+  // a raster tile that is still loading is stood in for by its nearest
+  // loaded parent, and every sharp ideal tile inside that parent is marked
+  // "covered" (not drawn). But the parent is often found only in the tile
+  // CACHE and is never put back among the drawn tiles -- so for a frame the
+  // whole area drew nothing and the brown background flashed through the
+  // satellite imagery (then a blurry frame, then sharp again), every second
+  // or two during playback. (Its parent lookup also reads a table from the
+  // previous frame, so a parent that has just loaded is marked covered
+  // too.) Fix: draw every loaded ideal tile, and under each one still
+  // loading its nearest loaded ancestor, found directly -- drawRaster's
+  // overlap stencil lets the sharp tiles win, so the ancestor only fills
+  // the hole of the missing one.
+  function patchTerrainRasterFallback() {
+    const sc = map.style && map.style.sourceCaches && map.style.sourceCaches.sat;
+    if (!sc) return;
+    const proto = Object.getPrototypeOf(sc);
+    const orig = proto._updateCoveredAndRetainedTiles;
+    if (proto.__fvTerrainFallbackFix || typeof orig !== 'function') return;
+    proto._updateCoveredAndRetainedTiles = function (retain, minZ, maxZ, zoom, idealTileIDs, terrain) {
+      orig.apply(this, arguments);
+      if (!terrain) return;
+      try {
+        const loaded = key => { const t = this._tiles[key]; return !!(t && t.hasData()); };
+        // Stand-ins MapLibre picked from its cache: actually add them.
+        for (const key in retain) {
+          if (!this._tiles[key]) this._addTile(retain[key]);
+        }
+        for (const id of idealTileIDs) {
+          if (loaded(id.key)) { delete this._coveredTiles[id.key]; continue; }
+          const kids = id.canonical.z < this._source.maxzoom ? id.children(this._source.maxzoom) : [];
+          if (kids.length && kids.every(k => loaded(k.key))) continue;   // children cover it
+          for (let z = id.overscaledZ - 1; z >= this._source.minzoom; z--) {
+            const pid = id.scaledTo(z);
+            const p = this._getLoadedTile(pid);
+            if (p && p.hasData()) {
+              retain[pid.key] = pid;   // or update() drops it right after
+              if (!this._tiles[pid.key]) this._addTile(pid);
+              delete this._coveredTiles[pid.key];
+              break;
+            }
+          }
+        }
+      } catch (e) { console.warn('terrain raster fallback fix failed:', e); }
+    };
+    proto.__fvTerrainFallbackFix = true;
+  }
+
   map.on('load', () => {
     overlay = new deck.MapboxOverlay({ interleaved: true, layers: [] });
     // Bottom-left so the control slot does not compete with NavigationControl
@@ -4332,6 +4380,7 @@ function initMap() {
     }, { displayModeBar: false, responsive: true });
     chartReady = true;
     mapReady = true;
+    patchTerrainRasterFallback();
     applyKk7Layers();
     applyOpenAipLayer();
     applySitesLayer();
