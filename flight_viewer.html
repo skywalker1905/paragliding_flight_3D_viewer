@@ -1431,7 +1431,7 @@
           </div>
         </div>
         <div class="row" id="rowMaxUp">
-          <span class="lbl" title="Climb rate at which the track turns full red. The ramp is not linear: a weak climb is already yellow at 20% of this value and orange at half.">Max climb</span>
+          <span class="lbl" title="Climb rate at which the track turns full red. Colours run green (normal glide) &rarr; lime (zero sink) &rarr; yellow &rarr; orange &rarr; red.">Max climb</span>
           <div class="ctl">
             <input type="range" id="maxUp" min="0.5" max="30" step="0.5" value="2.5" data-default="2.5" style="width:90px">
             <input type="number" id="maxUpN" value="2.5" step="0.5" min="0.1" data-default="2.5" style="width:54px">
@@ -1439,10 +1439,18 @@
           </div>
         </div>
         <div class="row" id="rowMaxDown">
-          <span class="lbl" title="Sink rate at which the track turns deep violet. A normal glide (about a third of this value) reads light blue.">Max sink</span>
+          <span class="lbl" title="Sink rate at which the track turns deep violet. Colours run green (normal glide) &rarr; teal &rarr; blue &rarr; violet.">Max sink</span>
           <div class="ctl">
             <input type="range" id="maxDown" min="0.5" max="30" step="0.5" value="3" data-default="3" style="width:90px">
             <input type="number" id="maxDownN" value="3" step="0.5" min="0.1" data-default="3" style="width:54px">
+            <span style="color:var(--fg-mute)">m/s</span>
+          </div>
+        </div>
+        <div class="row" id="rowGlideSink">
+          <span class="lbl" title="Your wing's own sink rate in still air. The track is green around this value, so an ordinary glide reads green, anything better turns warm (lime at zero sink, yellow to red in a climb) and anything worse turns blue. Set 0 to centre the colours on zero instead.">Normal glide</span>
+          <div class="ctl">
+            <input type="range" id="glideSink" min="0" max="2" step="0.1" value="1" data-default="1" style="width:90px">
+            <input type="number" id="glideSinkN" value="1" step="0.1" min="0" max="3" data-default="1" style="width:54px">
             <span style="color:var(--fg-mute)">m/s</span>
           </div>
         </div>
@@ -2807,7 +2815,7 @@ function parseFlightFile(text, filename) {
 // corrupt / stale blob can never wedge the app.
 const PREFS_STORAGE_KEY = 'fv_prefs_v1';
 const PERSIST_KEYS = [
-  'altSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown',
+  'altSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown', 'varioGlide',
   'exag', 'trackWidth', 'tube3d', 'smoothSubdiv', 'smoothTension',
   'kmlRateHz', 'spiralReconOn', 'spiralMode', 'spiralTurnsPerSec',
   'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed', 'autoSpeed',
@@ -2858,6 +2866,8 @@ const rawState = {
   colorMode: 'vario',   // 'vario' | 'single'
   varioMaxUp: 2.5,      // m/s -- saturates red at this climb rate
   varioMaxDown: 3,      // m/s -- saturates violet at this sink rate
+  varioGlide: 1,        // m/s -- the wing's own sink in still air; the
+                        //   colour ramp's green centre (0 = centre on zero)
   singleColor: [0, 255, 0],     // pure green
   follow: true,
   exag: 1.0,
@@ -3066,33 +3076,43 @@ function altOf(f)      { return state.altSrc === 'gps' ? f.alt_gps : f.alt_baro;
 function altDisplay(f) { return (altOf(f) + state.altOffset) * state.exag; }
 
 // Vario -> colour, through a table of hand-picked stops instead of a
-// linear hue sweep. The old 240 -> 120 -> 0 HSL sweep spent a third of its
-// range on hues the eye all reads as "green" (about 75-165 deg), so any
-// climb under ~0.7 m/s and any sink under ~0.7 m/s -- roughly half of a
-// typical flight -- looked the same as zero. The stops below are spaced by
-// how different the colours LOOK, and are denser near zero, so the sign of
-// the vario is visible from about +-0.2 m/s:
-//   climb: green -> lime -> yellow -> orange -> red   (x = vz / Max climb)
-//   sink:  green -> teal -> sky blue -> blue -> violet (x = vz / Max sink)
-// With the defaults (2.5 up, 3 down): +0.25 lime, +0.5 yellow, +1.25
-// orange, +2.5 red; a trim-speed glide (-1 m/s) is sky blue, -1.8 blue,
-// -3 violet.
+// linear hue sweep (the old 240 -> 120 -> 0 HSL sweep spent a third of its
+// range on hues the eye all reads as "green").
+//
+// The ramp is centred on the wing's NORMAL GLIDE, not on zero: a paraglider
+// in still air sinks about 1 m/s, so a zero-centred scale paints every
+// ordinary glide blue and leaves green for the rare moments of exactly
+// zero. Centred on state.varioGlide the colours read like a netto vario:
+//   green  = gliding (a plateau from about 0.3 m/s worse to 0.6 better
+//            than the glide rate, so sensor noise doesn't flicker)
+//   warm   = going up: lime at zero sink -> yellow -> orange -> red at
+//            Max climb
+//   cold   = sinking faster than the wing does by itself: teal -> sky blue
+//            -> blue -> violet at Max sink
+// x runs 0..1 from the glide rate up to Max climb and 0..-1 down to Max
+// sink. With the defaults (glide 1, up 2.5, down 3 m/s): -1.3..-0.4 green,
+// -0.1 lime, +0.2 yellow, +1 orange, +2.5 red; -1.6 teal, -2 sky, -2.4
+// blue, -3 violet. Set Normal glide to 0 for a classic zero-centred scale.
 const VARIO_STOPS = [
   [-1.00, 124,  58, 237],   // violet   -- heavy sink
-  [-0.60,  37,  99, 235],   // blue
-  [-0.33,  14, 165, 233],   // sky blue -- ordinary glide
-  [-0.12,  20, 200, 170],   // teal
-  [ 0.00,  74, 210,  95],   // green    -- zero
-  [ 0.10, 170, 225,  45],   // lime
-  [ 0.20, 250, 220,  25],   // yellow   -- weak climb
-  [ 0.50, 255, 140,  15],   // orange   -- solid climb
-  [ 0.78, 245,  65,  30],   // red-orange
+  [-0.72,  37,  99, 235],   // blue
+  [-0.50,  14, 165, 233],   // sky blue
+  [-0.30,  20, 200, 170],   // teal     -- sinking air
+  [-0.15,  74, 210,  95],   // green    \
+  [ 0.00,  74, 210,  95],   // green     > normal glide
+  [ 0.17,  74, 210,  95],   // green    /
+  [ 0.26, 170, 225,  45],   // lime     -- about zero sink
+  [ 0.34, 250, 220,  25],   // yellow   -- weak climb
+  [ 0.57, 255, 140,  15],   // orange   -- solid climb
+  [ 0.80, 245,  65,  30],   // red-orange
   [ 1.00, 215,  15,  60],   // red      -- strong climb
 ];
 function varioColor(vz) {
-  const denom = vz >= 0 ? Math.max(0.1, state.varioMaxUp)
-                        : Math.max(0.1, state.varioMaxDown);
-  let x = vz / denom;
+  const g = -Math.max(0, state.varioGlide);
+  const d = vz - g;
+  const span = d >= 0 ? Math.max(0.1, state.varioMaxUp - g)
+                      : Math.max(0.1, state.varioMaxDown + g);
+  let x = d / span;
   if (!(x > -1)) x = -1; else if (x > 1) x = 1;
   const S = VARIO_STOPS;
   let k = 1;
@@ -4734,24 +4754,6 @@ class AppControl {
 // ============================================================================
 //  deck.gl layers
 // ============================================================================
-// Group consecutive fixes by quantized smoothed-vario bin into multi-vertex
-// paths. Each bin becomes one PathLayer item with a single color, but inside
-// that item the joints are rounded so the geometry reads as one smooth ribbon.
-// Adjacent paths share an endpoint so they butt up cleanly.
-const VARIO_BINS = 80;     // -40..+40 -> 81 unique colors total (the
-                           //   ramp changes fastest near zero)
-function varioBin(vz) {
-  const denom = vz >= 0 ? Math.max(0.1, state.varioMaxUp)
-                        : Math.max(0.1, state.varioMaxDown);
-  let x = vz / denom;
-  if (x > 1) x = 1; else if (x < -1) x = -1;
-  return Math.round(x * (VARIO_BINS / 2));
-}
-function binToVario(b) {
-  const x = b / (VARIO_BINS / 2);
-  return x >= 0 ? x * state.varioMaxUp : x * state.varioMaxDown;
-}
-
 // Build path data as ONE segment per fix-to-fix gap, each tagged with its
 // time span (tStart, tEnd) so the renderer can fade / hide based on
 // playback time. Each segment is independent of color binning so vario
@@ -4772,7 +4774,7 @@ function buildPathData() {
           ? [239, 68, 68]
           : state.singleColor)
       : (useVario
-          ? varioColor(binToVario(varioBin(smoothedVario(i))))
+          ? varioColor(smoothedVario(i))
           : state.singleColor);
     data[i] = { path, color, tStart: tMs[i], tEnd: tMs[i + 1] };
   }
@@ -4833,7 +4835,7 @@ function getPathData() {
   const sig = state.altSrc + '|' + state.exag.toFixed(2) +
               '|' + state.altOffset.toFixed(1) +
               '|' + state.colorMode +
-              '|u' + state.varioMaxUp + 'd' + state.varioMaxDown +
+              '|u' + state.varioMaxUp + 'd' + state.varioMaxDown + 'g' + state.varioGlide +
               '|s' + state.smoothSubdiv +
               '|t' + state.smoothTension.toFixed(2) +
               '|a' + airRev + ':' + (state.airspaceShow ? 1 : 0) +
@@ -5096,7 +5098,7 @@ let curtainSig = '';
 function buildCurtainLayers() {
   if (!state.showCurtain || N < 2) return [];
   const sig = `${state.altSrc}|${state.exag.toFixed(2)}|${state.altOffset.toFixed(1)}`
-    + `|u${state.varioMaxUp}d${state.varioMaxDown}`
+    + `|u${state.varioMaxUp}d${state.varioMaxDown}g${state.varioGlide}`
     + `|g${groundReady ? 1 : 0}|n${N}`;
   if (!curtainCache || sig !== curtainSig) {
     curtainSig = sig;
@@ -7055,6 +7057,7 @@ function setupAppUi() {
     const show = state.colorMode === 'vario';
     document.getElementById('rowMaxUp').style.opacity   = show ? '' : '0.4';
     document.getElementById('rowMaxDown').style.opacity = show ? '' : '0.4';
+    document.getElementById('rowGlideSink').style.opacity = show ? '' : '0.4';
   }
   updateColorRows();
 
@@ -7074,6 +7077,7 @@ function setupAppUi() {
   }
   pairSliderNumber('maxUp',   'maxUpN',   'varioMaxUp',   0.1, 50);
   pairSliderNumber('maxDown', 'maxDownN', 'varioMaxDown', 0.1, 50);
+  pairSliderNumber('glideSink', 'glideSinkN', 'varioGlide', 0, 3);
 
   document.getElementById('followCam').addEventListener('change', e => {
     setFollow(e.target.checked);
@@ -7879,6 +7883,7 @@ function setupAppUi() {
       ['spiralTPS', state.spiralTurnsPerSec], ['spiralThr', state.spiralThreshold],
       ['trackHold', state.trackHoldSec], ['trailFade', state.trailFadeSec],
       ['maxUp', state.varioMaxUp], ['maxDown', state.varioMaxDown],
+      ['glideSink', state.varioGlide],
       ['pilotSize', state.pilotSize], ['orbitSpeed', state.orbitSpeedDeg],
       ['orbitResume', state.orbitResumeSec],
       ['curtainHold', state.curtainHoldSec], ['curtainFade', state.curtainFadeSec],
@@ -10334,7 +10339,7 @@ let cmpGeomSig = '';
 function ensureCmpGeometry() {
   const sig = `${state.altSrc}|${state.exag}|${state.altOffset}`
     + `|s${state.smoothSubdiv}|t${state.smoothTension}`
-    + `|u${state.varioMaxUp}d${state.varioMaxDown}|r${cmpRev}`;
+    + `|u${state.varioMaxUp}d${state.varioMaxDown}g${state.varioGlide}|r${cmpRev}`;
   if (sig === cmpGeomSig) return;
   cmpGeomSig = sig;
   for (const tr of cmpTracks) tr.segData = buildCmpSegData(tr);

@@ -103,11 +103,12 @@ cached them or have been opened online at least once.
   construction, so thermal circles and long glides both come out fair
   with nothing to tune. A **Rounding** slider (0 – 100 %) blends between
   raw chords and the full spline.
-- Per-vertex **vario colouring** on a non-linear ramp that shows the sign
-  of the vario from about ±0.2 m/s: green ≈ 0, then lime → yellow → orange
-  → red for climb and teal → sky blue → blue → violet for sink (an
-  ordinary glide reads sky blue). Adjustable max climb / sink (default
-  2.5 m/s up, 3 m/s down), or **single colour** (default pure green).
+- Per-vertex **vario colouring** on a non-linear ramp centred on the
+  wing's normal glide rather than on zero: **green = gliding** (about
+  −1.3 to −0.4 m/s), lime at zero sink → yellow → orange → **red = climb**,
+  and teal → sky blue → **blue = sinking** → violet. Adjustable max climb
+  / max sink / normal glide (defaults 2.5 / 3 / 1 m/s; set normal glide to
+  0 for a zero-centred scale), or **single colour** (default pure green).
 - Adjustable pixel width (`Track width`) and optional metres-wide 3-D
   ribbon (`3-D thickness`) so the track reads as a solid body from any
   angle.
@@ -415,7 +416,7 @@ Collapsible sections (open/closed state remembered):
 - **Spiral reconstruction** — On/Off, Auto / Manual mode, turns / sec,
   detect threshold, manual range.
 - **Trail & pilot** — track & curtain fade (switch + hold + fade each),
-  track curtain, colour mode + max climb / sink, pilot shape / size,
+  track curtain, colour mode + max climb / sink / normal glide, pilot shape / size,
   altitude line, XC triangle.
 
 Basics, Camera and Playback start open; the rest start collapsed.
