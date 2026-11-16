@@ -235,11 +235,14 @@
 
   /* Live HUD -- default top-right, clear of the map-control column
      (~48px wide) so nav/fullscreen/follow buttons stay reachable. */
-  /* Vario colour key on the left edge: purely informative, never
-     interactive, so it can sit over the map without blocking drags. */
+  /* Vario colour key on the right edge, in the free strip under the map
+     controls (the left edge belongs to the stats panel, which covered
+     it). Purely informative, never interactive, so it can sit over the
+     map without blocking drags. */
   #varioLegend {
-    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
-    width: 66px; height: 168px; z-index: 12; pointer-events: none;
+    position: absolute; right: 6px; top: max(50%, 392px);
+    transform: translateY(-50%);
+    width: 54px; height: 168px; z-index: 12; pointer-events: none;
   }
   #varioLegend.hidden, body.noTrack #varioLegend { display: none; }
   @media (max-height: 460px) { #varioLegend { display: none; } }
@@ -428,6 +431,8 @@
     font-size: 11px; color: var(--fg); font-variant-numeric: tabular-nums;
   }
   #chartSel.hidden { display: none; }
+  #chartSelBtn.active { background: var(--accent); color: #fff; }
+  #chart.selMode { cursor: col-resize; }
   #chartSelText { flex: 1; min-width: 0; }
   #chartSel .btn-small { padding: 2px 8px; font-size: 10px; }
   #chartCursor {
@@ -1222,6 +1227,15 @@
           </div>
         </div>
         <div class="row">
+          <span class="lbl" title="Which altitude the climb / sink rate is computed from (HUD vario, track colours, chart, thermal stats). Baro is the standard for a vario: a pressure sensor resolves a few centimetres and reacts at once, while GPS altitude wanders by several metres. A log without pressure data uses GPS automatically. Independent of the Altitude source above, which only sets the height the track is drawn at.">Vario source</span>
+          <div class="ctl">
+            <div class="toggle" id="varioSrc">
+              <button data-v="baro">Baro</button>
+              <button data-v="gps">GPS</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
           <span class="lbl">Basemap</span>
           <div class="ctl">
             <div class="toggle" id="base">
@@ -1544,7 +1558,7 @@
           </div>
         </div>
         <div class="row">
-          <span class="lbl" title="Small colour key on the left edge of the map showing which climb / sink rate each track colour stands for. Included in recordings.">Colour legend</span>
+          <span class="lbl" title="Small colour key on the right edge of the map showing which climb / sink rate each track colour stands for. Included in recordings.">Colour legend</span>
           <div class="ctl"><input type="checkbox" id="legendCb" checked></div>
         </div>
         <div class="row">
@@ -1829,6 +1843,9 @@
           <button data-v="vario">Vario</button>
           <button data-v="speed">Speed</button>
         </div>
+        <button id="chartSelBtn" class="iconbtn" title="Select a range: click, then drag across the chart (or Shift + drag any time)" aria-label="Select a range on the chart" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M5 4v16M19 4v16"/><path d="M9 12h6M9 12l2-2M9 12l2 2M15 12l-2-2M15 12l-2 2"/></svg>
+        </button>
         <button id="closeChart" class="iconbtn" title="Close chart" aria-label="Close chart">&times;</button>
       </div>
       <div id="chart"></div>
@@ -1983,7 +2000,7 @@
       <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Set A-B loop start / end</td></tr>
       <tr><td><kbd>\</kbd></td><td>Clear A-B loop</td></tr>
       <tr><td><kbd>Wheel</kbd></td><td>On the chart: zoom time axis (dbl-click resets)</td></tr>
-      <tr><td><kbd>Shift</kbd> + drag</td><td>On the chart: select a range (stats, loop, zoom)</td></tr>
+      <tr><td><kbd>Shift</kbd> + drag</td><td>On the chart: select a range (stats, loop, zoom) &mdash; or use the chart's select button, also on touch</td></tr>
       <tr><td><kbd>S</kbd></td><td>Settings panel</td></tr>
       <tr><td><kbd>I</kbd></td><td>Flight statistics</td></tr>
       <tr><td><kbd>L</kbd></td><td>Live HUD</td></tr>
@@ -2392,12 +2409,15 @@ function deriveSpeeds(arr) {
   }
   applyVarioSource(arr);
 }
-// vz_ms always follows the selected altitude source, so the vario (HUD,
-// chart, track colours, thermal stats) describes the same altitude trace
-// that is drawn. It used to be baro-only: with the track drawn at GPS
-// altitude the two could disagree by up to 1 m/s on phone logs.
+// vz_ms comes from the barometric altitude by default -- what every vario
+// instrument and flight-analysis tool does: a pressure sensor resolves a
+// few centimetres with no lag, while GNSS altitude wanders by metres, so a
+// GPS-derived climb rate is noisier and reads false lift / sink. "Vario
+// source" in the settings can switch it to GPS; a log with no usable baro
+// channel has already had it filled from GPS (deriveSpeeds), so the
+// default works there too.
 function applyVarioSource(arr) {
-  const g = state.altSrc === 'gps';
+  const g = state.varioSrc === 'gps';
   for (let i = 0; i < arr.length; i++) arr[i].vz_ms = g ? arr[i].vz_g : arr[i].vz_b;
 }
 
@@ -2958,7 +2978,7 @@ function parseFlightFile(text, filename) {
 // corrupt / stale blob can never wedge the app.
 const PREFS_STORAGE_KEY = 'fv_prefs_v1';
 const PERSIST_KEYS = [
-  'altSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown', 'varioGlide', 'showLegend', 'lowAglM',
+  'altSrc', 'varioSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown', 'varioGlide', 'showLegend', 'lowAglM',
   'exag', 'trackWidth', 'tube3d', 'smoothSubdiv', 'smoothTension',
   'kmlRateHz', 'spiralReconOn', 'spiralMode', 'spiralTurnsPerSec',
   'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed', 'autoSpeed',
@@ -3003,6 +3023,7 @@ let renderDirty = true;
 
 const rawState = {
   altSrc: 'gps',
+  varioSrc: 'baro',     // 'baro' | 'gps' -- altitude the vario is derived from
   base: 'sat',
   mapLabels: true,      // place-name labels (cities, peaks, lakes) on the map
   units: 'metric',
@@ -3288,7 +3309,7 @@ function updateLegend() {
   _legendSig = sig;
   cv.classList.toggle('hidden', !vis);
   if (!vis) return;
-  const W = 66, H = 168;
+  const W = 54, H = 168;
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
   const c = cv.getContext('2d');
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -3302,7 +3323,7 @@ function updateLegend() {
   c.textAlign = 'center'; c.textBaseline = 'middle';
   c.fillText(U.vzLabel().toUpperCase(), W / 2, 11);
   const up = state.varioMaxUp, dn = state.varioMaxDown;
-  const top = 24, bot = H - 12, bx = 9, bw = 9;
+  const top = 24, bot = H - 12, bx = 7, bw = 8;
   const yOf = v => top + (up - v) / (up + dn) * (bot - top);
   for (let y = top; y < bot; y++) {
     const k = varioColor(up - (y - top + 0.5) / (bot - top) * (up + dn));
@@ -3328,7 +3349,7 @@ function updateLegend() {
     c.fillStyle = 'rgba(255,255,255,0.55)';
     c.fillRect(bx + bw, Math.round(y) - 0.5, 4, 1);
     c.fillStyle = '#e6e9ef';
-    c.fillText(t, bx + bw + 7, Math.min(H - 7, Math.max(top, y)));
+    c.fillText(t, bx + bw + 6, Math.min(H - 7, Math.max(top, y)));
   }
 }
 
@@ -7531,14 +7552,20 @@ function setupAppUi() {
   }
   initToggle('altSrc', 'altSrc', () => {
     pathDataCache = null; spiralCache = null;
-    // The vario follows the altitude source: re-derive it, then everything
-    // computed from it (thermal gains, stats, glides, timeline colours).
-    applyVarioSource(fixes);
-    for (const tr of cmpTracks) applyVarioSource(tr.fixes);
-    cmpRev++;
+    // Thermal gains, glides and the stats are measured on this altitude.
     analyzeFlight();
     buildProgressTicks();
     refreshChart(); autoAlignGround(); renderStatsPanel();
+  });
+  initToggle('varioSrc', 'varioSrc', () => {
+    // Re-derive the vario, then everything computed from it (track and
+    // timeline colours, max climb / sink, the vario chart).
+    applyVarioSource(fixes);
+    for (const tr of cmpTracks) applyVarioSource(tr.fixes);
+    pathDataCache = null; cmpRev++;
+    analyzeFlight();
+    buildProgressTicks();
+    refreshChart(); renderStatsPanel();
   });
   initToggle('units',  'units',  () => {
     refreshChart();
@@ -8516,7 +8543,7 @@ function setupAppUi() {
       localStorage.removeItem('fv_secs_v1');
     } catch (_) {}
     const toggleKeys = [
-      ['altSrc', 'altSrc'], ['base', 'base'], ['units', 'units'],
+      ['altSrc', 'altSrc'], ['varioSrc', 'varioSrc'], ['base', 'base'], ['units', 'units'],
       ['colorMode', 'colorMode'], ['pilotShape', 'pilotShape'],
       ['camStyle', 'camStyle'], ['chartMetric', 'chartMetric'],
       ['cmpAlign', 'cmpAlign'],
@@ -9340,11 +9367,38 @@ function setupAppUi() {
     drawChart(); syncChartCursor();
   };
   let chartSelDrag = null;     // anchor x (shifted ms) while shift-dragging
+  // Range-select mode: armed by the header button for ONE drag (mouse or
+  // touch), then it switches itself off -- so ordinary click / drag keeps
+  // meaning "seek" and nothing has to be remembered or undone.
+  let chartSelMode = false;
+  const chartSelBtn = document.getElementById('chartSelBtn');
+  const setChartSelMode = on => {
+    chartSelMode = !!on;
+    chartSelBtn.classList.toggle('active', chartSelMode);
+    chartSelBtn.setAttribute('aria-pressed', chartSelMode ? 'true' : 'false');
+    chartEl.classList.toggle('selMode', chartSelMode);
+  };
+  for (const ev of ['mousedown', 'touchstart']) {
+    chartSelBtn.addEventListener(ev, e => e.stopPropagation());   // not a panel drag
+  }
+  chartSelBtn.onclick = () => {
+    if (N < 2) return;
+    setChartSelMode(!chartSelMode);
+    if (chartSelMode) showStatus('Drag across the chart to select a range');
+  };
+  const finishChartSel = () => {
+    chartSelDrag = null;
+    setChartSelMode(false);
+    // A stray click (no real drag) clears instead of selecting.
+    if (fvChart.sel && fvChart.sel[1] - fvChart.sel[0] < 3000) fvChart.sel = null;
+    renderChartSel();
+    drawChart();
+  };
 
   let chartScrub = false, chartScrubWasPlaying = false;
   chartEl.addEventListener('mousedown', (e) => {
     if (e.button !== 0 || ghostMouse()) return;
-    if (e.shiftKey && N > 1) {
+    if ((e.shiftKey || chartSelMode) && N > 1) {
       const x = chartXAt(e.clientX);
       if (isFinite(x)) { chartSelDrag = x; fvChart.sel = null; e.preventDefault(); }
       return;
@@ -9367,13 +9421,9 @@ function setupAppUi() {
   });
   window.addEventListener('mouseup', () => {
     if (chartSelDrag != null) {
-      chartSelDrag = null;
       chartSelSkipClick = true;
       setTimeout(() => { chartSelSkipClick = false; }, 0);
-      // A stray shift-click (no real drag) clears instead of selecting.
-      if (fvChart.sel && fvChart.sel[1] - fvChart.sel[0] < 3000) fvChart.sel = null;
-      renderChartSel();
-      drawChart();
+      finishChartSel();
       return;
     }
     if (!chartScrub) return;
@@ -9388,12 +9438,26 @@ function setupAppUi() {
     chartLastTouchTs = Date.now();
     if (e.touches.length === 1) {
       const t = e.touches[0];
+      if (chartSelMode && N > 1) {
+        const x = chartXAt(t.clientX);
+        if (isFinite(x)) { chartSelDrag = x; fvChart.sel = null; chartTouchStart = null; }
+        return;
+      }
       chartTouchStart = { x: t.clientX, y: t.clientY, time: Date.now() };
       chartTouchScrub = false;
     }
   }, { passive: true });
 
   chartEl.addEventListener('touchmove', (e) => {
+    if (chartSelDrag != null && e.touches.length === 1) {
+      const x = chartXAt(e.touches[0].clientX);
+      if (isFinite(x)) {
+        fvChart.sel = [Math.min(chartSelDrag, x), Math.max(chartSelDrag, x)];
+        scheduleChartDraw();
+      }
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
     if (!chartTouchStart || e.touches.length !== 1) return;
     const t = e.touches[0];
     const dx = t.clientX - chartTouchStart.x;
@@ -9411,6 +9475,7 @@ function setupAppUi() {
 
   chartEl.addEventListener('touchend', (e) => {
     chartLastTouchTs = Date.now();
+    if (chartSelDrag != null) { finishChartSel(); return; }
     if (!chartTouchStart) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - chartTouchStart.x;

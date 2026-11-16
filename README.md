@@ -109,12 +109,13 @@ cached them or have been opened online at least once.
   and teal → sky blue → **blue = sinking** → violet. Adjustable max climb
   / max sink / normal glide (defaults 2.5 / 3 / 1 m/s; set normal glide to
   0 for a zero-centred scale), or **single colour** (default pure green).
-- The **vario follows the selected altitude source** (GPS or baro), so the
-  colours, the HUD number, the chart and the thermal stats all describe
-  the altitude trace that is actually drawn. Logs with no usable baro
-  altitude (a constant 0 from loggers without a pressure sensor) fall back
-  to GPS automatically, and vice versa.
-- **Colour legend**: a small key on the left edge of the map shows which
+- The **vario is computed from barometric altitude** by default, as vario
+  instruments and analysis tools do (a pressure sensor resolves
+  centimetres with no lag; GPS altitude wanders by metres). Settings →
+  Basics → **Vario source** switches it to GPS. Logs with no usable baro
+  altitude (a constant 0 from loggers without a pressure sensor) use GPS
+  automatically, and vice versa.
+- **Colour legend**: a small key on the right edge of the map shows which
   climb / sink rate each colour stands for (settings → Trail & pilot;
   included in composited recordings).
 - Adjustable pixel width (`Track width`) and optional metres-wide 3-D
@@ -253,8 +254,10 @@ cached them or have been opened online at least once.
   the chart shows.
 - Draggable header, resizable corner (grip shown bottom-right).
 
-- **Select a range**: Shift + drag on the chart marks a stretch of the
-  flight and shows its duration, altitude change, mean climb, straight
+- **Select a range**: click the select button in the chart header and
+  drag across the chart (mouse or touch; it arms a single drag, so normal
+  click / drag keeps seeking), or Shift + drag at any time. This marks a
+  stretch of the flight and shows its duration, altitude change, mean climb, straight
   and flown distance, glide ratio and speed. **Loop** turns it into the
   A-B loop (which is also what track export uses), **Zoom** fits the
   chart to it.
@@ -460,7 +463,7 @@ cached them or have been opened online at least once.
 
 ### Settings drawer
 Collapsible sections (open/closed state remembered):
-- **Basics** — units, altitude source (GPS / baro), basemap, map labels,
+- **Basics** — units, altitude source (GPS / baro), vario source, basemap, map labels,
   swap L/R mouse (hidden on touch-only devices).
 - **Camera** — follow pilot, camera style (Center / Chase / Orbit /
   Director) with orbit speed / resume, Takeoff / Fit track shortcuts.
