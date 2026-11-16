@@ -1277,7 +1277,7 @@
           <div class="ctl"><input type="checkbox" id="autoTrim" checked></div>
         </div>
         <div class="row">
-          <span class="lbl" title="Pick the starting playback speed from the flight's length each time a flight is loaded, so a short sled ride plays near real time and a long cross-country still fits in about ten minutes. You can change the speed at any time; turn this off to keep your own speed from one flight to the next.">Auto speed</span>
+          <span class="lbl" title="Pick the starting playback speed from the flight's length each time a flight is loaded, so a short sled ride replays in about half a minute and a long cross-country in a few minutes. You can change the speed at any time; turn this off to keep your own speed from one flight to the next.">Auto speed</span>
           <div class="ctl"><input type="checkbox" id="autoSpeedCb" checked></div>
         </div>
         <div class="row">
@@ -8903,17 +8903,18 @@ function askText(title, value, placeholder) {
 // web maps), which nobody discovers from a tooltip. Shown once per
 // browser on the first loaded flight; never in Explore mode.
 // Starting playback speed from the flight's length. One fixed speed can't
-// suit both ends: at 5x a 4 min top-to-bottom is over in 50 s and a 6 h
-// cross-country takes 75 min. The watch-time budget grows with the square
-// root of the airtime (2 min + 4 min per sqrt-hour), so long flights get
-// more screen time without scaling linearly:
-//    4 min -> 1x (4 min)     30 min -> 5x (6 min)     1 h -> 10x (6 min)
-//    2 h -> 15x (8 min)      3 h -> 20x (9 min)       6 h -> 30x (12 min)
+// suit both ends: at 5x a 4 min top-to-bottom takes 50 s and a 6 h
+// cross-country 75 min. Playback is meant as a quick replay, so the
+// watch-time budget is short and grows with the square root of the airtime
+// (10 s + 80 s per sqrt-hour) -- long flights get more screen time without
+// scaling linearly:
+//    4 min -> 8x (30 s)      30 min -> 30x (1 min)    1 h -> 45x (80 s)
+//    2 h -> 60x (2 min)      3 h -> 60x (3 min)       6 h -> 120x (3 min)
 // The result snaps to the nearest "round" speed on a log scale.
-const AUTO_SPEEDS = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
+const AUTO_SPEEDS = [1, 2, 3, 5, 8, 10, 15, 20, 30, 45, 60, 90, 120];
 function autoSpeedFor(durS) {
   if (!(durS > 0)) return 5;
-  const budgetS = 120 + 240 * Math.sqrt(durS / 3600);
+  const budgetS = 10 + 80 * Math.sqrt(durS / 3600);
   const want = Math.log(durS / budgetS);
   let best = AUTO_SPEEDS[0], bestD = Infinity;
   for (const v of AUTO_SPEEDS) {
