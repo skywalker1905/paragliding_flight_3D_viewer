@@ -235,6 +235,14 @@
 
   /* Live HUD -- default top-right, clear of the map-control column
      (~48px wide) so nav/fullscreen/follow buttons stay reachable. */
+  /* Vario colour key on the left edge: purely informative, never
+     interactive, so it can sit over the map without blocking drags. */
+  #varioLegend {
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    width: 66px; height: 168px; z-index: 12; pointer-events: none;
+  }
+  #varioLegend.hidden, body.noTrack #varioLegend { display: none; }
+  @media (max-height: 460px) { #varioLegend { display: none; } }
   #hud {
     position: absolute; right: 60px; top: 12px; z-index: 18;
     background: var(--bg-pane-strong); border: 1px solid var(--bd);
@@ -410,6 +418,18 @@
   #chart { width: 100%; flex: 1; min-height: 0; position: relative;
            cursor: crosshair; }
   #chartCanvas { display: block; width: 100%; height: 100%; }
+  /* Range selection read-out: floats over the top of the plot so the
+     chart's own layout (and the cursor's offsets) never move. */
+  #chartSel {
+    position: absolute; left: 8px; right: 8px; top: 34px; z-index: 3;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 4px 6px 4px 10px; border-radius: 8px;
+    background: rgba(18, 22, 30, 0.92); border: 1px solid var(--bd-2);
+    font-size: 11px; color: var(--fg); font-variant-numeric: tabular-nums;
+  }
+  #chartSel.hidden { display: none; }
+  #chartSelText { flex: 1; min-width: 0; }
+  #chartSel .btn-small { padding: 2px 8px; font-size: 10px; }
   #chartCursor {
     position: absolute;
     top: 48px; /* header height (28px) + chart top margin (20px) */
@@ -479,6 +499,7 @@
   }
   #progTicks .tick.maxalt  { background: var(--accent-2); width: 3px; }
   #progTicks .tick.takeoff { background: #ffffff; width: 3px; }
+  #progTicks .tick.tp { background: #fde047; width: 2px; }
   #progBubble {
     position: absolute; bottom: calc(100% + 8px); transform: translateX(-50%);
     background: var(--bg-pane-strong); border: 1px solid var(--bd-2);
@@ -581,16 +602,18 @@
   #statsPanel .thermal .gain { color: var(--warn); font-weight: 600; }
   /* Thermal rows: fixed columns so durations, gains and climb rates line
      up and can be compared down the list. */
-  #thermalList .thermal {
+  #thermalList .thermal, #glideList .thermal {
     grid-template-columns: 54px 32px 30px minmax(0, 1fr) 34px 32px;
     gap: 4px;
   }
-  #thermalList .thermal > span { text-align: right; white-space: nowrap;
+  #thermalList .thermal > span, #glideList .thermal > span { text-align: right; white-space: nowrap;
                                  min-width: 0; overflow: hidden; }
-  #thermalList .thermal > span:first-child { text-align: left; }
-  #thermalList .thHead { cursor: default; color: var(--fg-mute);
+  #thermalList .thermal > span:first-child, #glideList .thermal > span:first-child { text-align: left; }
+  #thermalList .thHead, #glideList .thHead { cursor: default; color: var(--fg-mute);
                          font-size: 10px; }
-  #thermalList .thHead:hover { background: none; color: var(--fg-mute); }
+  #thermalList .thHead:hover, #glideList .thHead:hover { background: none; color: var(--fg-mute); }
+
+  #glideList .thermal { grid-template-columns: 54px 34px 30px minmax(0, 1fr) 30px 30px; }
 
   /* ---------- Help overlay (keyboard shortcuts) ---------- */
   #helpOverlay {
@@ -683,6 +706,8 @@
      !important because MapLibre's canvas-container grab/grabbing cursors
      and the custom drag handlers would otherwise win mid-gesture -- with
      terrain the picked spot is easy to misjudge without a fixed reticle. */
+  body.measuring #map, body.measuring #map canvas,
+  body.measuring .maplibregl-canvas-container,
   body.siteDrawing #map, body.siteDrawing #map canvas,
   body.siteDrawing .maplibregl-canvas-container {
     cursor: crosshair !important;
@@ -698,6 +723,26 @@
     font-size: 12px; color: var(--fg);
   }
   #siteDrawBar #siteDrawBarHint { color: var(--warn); white-space: nowrap; }
+  /* Measure tool read-out: same floating bar, but the text may wrap. */
+  #measureBar {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 30; display: none; align-items: center; gap: 8px;
+    padding: 7px 10px; border-radius: 10px; max-width: calc(100% - 150px);
+    background: var(--bg-pane-strong); border: 1px solid var(--bd);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums;
+  }
+  body.measuring #measureBar { display: flex; }
+  /* The read-out needs the top of the map; the HUD steps aside meanwhile. */
+  body.measuring #hud { opacity: 0; pointer-events: none; }
+  #taskList .thermal, #lowList .thermal {
+    grid-template-columns: minmax(0, 1fr) auto; gap: 8px;
+  }
+  #taskList .thermal > span:last-child, #lowList .thermal > span:last-child { text-align: right; }
+  #measureText { line-height: 1.45; }
+  #measureText .dim { color: var(--fg-dim); }
+  #btnMeasure.on { background: var(--accent); color: #fff; }
 
   /* Director timeline-shot bands on the progress bar */
   #shotBands { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
@@ -729,6 +774,12 @@
                        flex-wrap: wrap; }
 
   /* Airspace violation marks above the vario strip */
+  #progTicks .tick.lowagl {
+    background: rgba(245, 158, 11, 0.98);
+    top: auto; bottom: -3px; height: 3px; min-width: 2px;
+    box-shadow: none; border-radius: 1px;
+  }
+  #hAgl.low { color: var(--warn); }
   #progTicks .tick.violation {
     background: rgba(239, 68, 68, 0.95);
     top: -3px; bottom: auto; height: 3px; min-width: 2px;
@@ -1104,11 +1155,12 @@
      when an app that registers them (XCTrack, SeeYou, ...) is installed,
      otherwise the files show greyed out. iOS drops the filter (below) and
      relies on loadFile()'s own "Unsupported or empty file" check. -->
-<input type="file" id="fileInput"
-       accept=".igc,.gpx,.kml,.fvmap,.IGC,.GPX,.KML,.FVMAP,application/vnd.google-earth.kml+xml,application/gpx+xml,application/json,text/plain">
+<input type="file" id="fileInput" multiple
+       accept=".igc,.gpx,.kml,.fvmap,.cup,.wpt,.xctsk,.IGC,.GPX,.KML,.FVMAP,.CUP,.WPT,.XCTSK,application/vnd.google-earth.kml+xml,application/gpx+xml,application/json,text/plain">
 <input type="file" id="cmpFileInput" multiple style="display:none"
        accept=".igc,.gpx,.kml,.IGC,.GPX,.KML,application/vnd.google-earth.kml+xml,application/gpx+xml,text/plain">
 <input type="file" id="airspaceFileInput" style="display:none" accept=".txt,.openair,text/plain">
+<input type="file" id="taskFileInput" multiple style="display:none" accept=".xctsk,.cup,.wpt,.XCTSK,.CUP,.WPT,application/json,text/plain">
 <script>
   if (/iPad|iPhone|iPod/.test(navigator.userAgent)
       || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
@@ -1127,6 +1179,11 @@
 
     <!-- Floating draw toolbar: appears while placing a launch / LZ so the
          user can finish without reopening the settings drawer. -->
+    <div id="measureBar" role="status">
+      <span id="measureText">Click two points on the map</span>
+      <button id="measureClear" class="btn-small">Clear</button>
+      <button id="measureDone" class="btn-small">Done</button>
+    </div>
     <div id="siteDrawBar" style="display:none">
       <span id="siteDrawBarHint">Click map to place…</span>
       <button id="siteDrawBarDone" class="btn-small">Done</button>
@@ -1480,6 +1537,17 @@
           <div class="ctl"><input type="checkbox" id="xcTriCb" checked></div>
         </div>
         <div class="row">
+          <span class="lbl" title="In-flight stretches closer to the terrain than this are marked in amber under the timeline, listed in the flight stats, and turn the HUD's AGL value amber. The first minute after takeoff and the last 90 s before landing don't count. 0 = off.">Low AGL alert</span>
+          <div class="ctl">
+            <input type="range" id="lowAgl" min="0" max="150" step="10" value="50" data-default="50" style="width:120px">
+            <span id="lowAglV" style="min-width:44px;color:var(--fg-dim)">50 m</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Small colour key on the left edge of the map showing which climb / sink rate each track colour stands for. Included in recordings.">Colour legend</span>
+          <div class="ctl"><input type="checkbox" id="legendCb" checked></div>
+        </div>
+        <div class="row">
           <span class="lbl" title="Translucent wall from the track down to the terrain (SeeYou-style curtain). Strong depth cue for the 3D shape of the flight; costs some GPU on long tracks.">Track curtain</span>
           <div class="ctl"><input type="checkbox" id="curtainCb"></div>
         </div>
@@ -1529,6 +1597,24 @@
           </div>
         </div>
         <div id="cmpList"></div>
+        </div>
+
+        <div class="sec closed" data-sec="task"><span class="chev">&#x25BE;</span><span>Task &amp; waypoints</span></div>
+        <div class="secBody closed" data-secbody="task">
+        <div class="row">
+          <span class="lbl" title="A task declared inside the IGC file is picked up automatically. Load an XCTrack task (.xctsk), a SeeYou file (.cup, waypoints and its first task) or a waypoint list (.wpt) to show another one. Turnpoint cylinders and the course line are drawn on the map, and the flight stats list when each cylinder was reached.">Task / waypoint file</span>
+          <div class="ctl" style="gap:6px">
+            <button id="taskLoadBtn" class="btn-small">Load&hellip;</button>
+            <button id="taskClearBtn" class="btn-small" style="color:var(--fg-mute)">Clear</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl">Show on map</span>
+          <div class="ctl"><input type="checkbox" id="taskShowCb" checked></div>
+        </div>
+        <div class="row stack">
+          <span id="taskStatus" style="font-size:11px;color:var(--fg-dim)">No task loaded</span>
+        </div>
         </div>
 
         <div class="sec closed" data-sec="airspace"><span class="chev">&#x25BE;</span><span>Airspace</span></div>
@@ -1689,6 +1775,14 @@
           <span class="lbl" title="On: records everything on screen exactly as you see it — all panels, buttons and the settings window (uses the browser's screen-capture picker, choose 'This Tab'). Off: records only the clean 3D map plus the Live HUD and chart, with no prompt.">Record all panels</span>
           <div class="ctl"><input type="checkbox" id="recordFullUi" checked></div>
         </div>
+        <div class="row">
+          <span class="lbl" title="Save the track as a new file. With an A-B loop set (or a chart selection turned into a loop) only that section is exported, otherwise the flight from takeoff to landing. GPX and KML open in most mapping tools; IGC keeps both GPS and baro altitude.">Export track</span>
+          <div class="ctl" style="gap:6px">
+            <button id="expGpx" class="btn-small">GPX</button>
+            <button id="expIgc" class="btn-small">IGC</button>
+            <button id="expKml" class="btn-small">KML</button>
+          </div>
+        </div>
         <div class="row" id="rowShareLink">
           <span class="lbl" title="Copy a link to this page with the current playback position embedded (#t=seconds). Whoever opens it loads the same file and jumps to this moment.">Share position</span>
           <div class="ctl"><button id="shareBtn" class="btn-small">Copy link</button></div>
@@ -1700,6 +1794,8 @@
         </div>
       </div>
     </div>
+
+    <canvas id="varioLegend" aria-hidden="true"></canvas>
 
     <div id="hud">
       <header>
@@ -1736,6 +1832,12 @@
         <button id="closeChart" class="iconbtn" title="Close chart" aria-label="Close chart">&times;</button>
       </div>
       <div id="chart"></div>
+      <div id="chartSel" class="hidden">
+        <span id="chartSelText"></span>
+        <button id="chartSelLoop" class="btn-small" title="Loop playback inside this range (sets the A-B loop)">Loop</button>
+        <button id="chartSelZoom" class="btn-small" title="Zoom the chart to this range">Zoom</button>
+        <button id="chartSelClear" class="btn-small" title="Clear selection" aria-label="Clear selection">&times;</button>
+      </div>
       <div id="chartCursor"></div>
     </div>
 
@@ -1752,10 +1854,16 @@
         <div id="statsRows"></div>
         <div class="subhead" id="violHead" style="display:none;color:var(--bad)">Airspace violations (click to jump)</div>
         <div id="violList"></div>
+        <div class="subhead" id="taskHead" style="display:none">Task (click to jump)</div>
+        <div id="taskList"></div>
+        <div class="subhead" id="lowHead" style="display:none;color:var(--warn)">Low passes</div>
+        <div id="lowList"></div>
         <div class="subhead" id="windHead" style="display:none">Wind by altitude</div>
         <div id="windList"></div>
         <div class="subhead" id="thermalHead" style="display:none">Thermals (click to jump)</div>
         <div id="thermalList"></div>
+        <div class="subhead" id="glideHead" style="display:none">Glides between thermals (click to jump)</div>
+        <div id="glideList"></div>
       </div>
     </div>
 
@@ -1875,6 +1983,7 @@
       <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Set A-B loop start / end</td></tr>
       <tr><td><kbd>\</kbd></td><td>Clear A-B loop</td></tr>
       <tr><td><kbd>Wheel</kbd></td><td>On the chart: zoom time axis (dbl-click resets)</td></tr>
+      <tr><td><kbd>Shift</kbd> + drag</td><td>On the chart: select a range (stats, loop, zoom)</td></tr>
       <tr><td><kbd>S</kbd></td><td>Settings panel</td></tr>
       <tr><td><kbd>I</kbd></td><td>Flight statistics</td></tr>
       <tr><td><kbd>L</kbd></td><td>Live HUD</td></tr>
@@ -2191,6 +2300,7 @@ function sampleGroundAlt() {
     refreshChart();
     if (groundReady) {
       autoAlignGround();
+      refreshLowPasses();
       // AGL-limited airspace zones could not be checked before the DEM
       // arrived -- re-run the violation scan now.
       if (typeof airspaceZones !== 'undefined' && airspaceZones.length) {
@@ -2251,14 +2361,44 @@ function autoAlignGround() {
 function deriveSpeeds(arr) {
   const n = arr.length, win = 2;
   const ts = arr.map(f => Date.parse(f.t));
+  // A logger without a pressure sensor writes 00000 (or one constant) for
+  // the baro altitude, and a few write no GNSS altitude. Fill the dead
+  // channel from the live one so altitude, vario, thermals and colours all
+  // keep working whichever "Altitude source" is selected.
+  let bLo = Infinity, bHi = -Infinity, gLo = Infinity, gHi = -Infinity;
+  for (const f of arr) {
+    if (f.alt_baro < bLo) bLo = f.alt_baro;
+    if (f.alt_baro > bHi) bHi = f.alt_baro;
+    if (f.alt_gps < gLo) gLo = f.alt_gps;
+    if (f.alt_gps > gHi) gHi = f.alt_gps;
+  }
+  arr.altFill = null;
+  if (n >= 10 && bHi - bLo < 2 && gHi - gLo >= 20) {
+    for (const f of arr) f.alt_baro = f.alt_gps;
+    arr.altFill = 'baro';     // no usable baro -> GPS used for both
+  } else if (n >= 10 && gHi - gLo < 2 && bHi - bLo >= 20) {
+    for (const f of arr) f.alt_gps = f.alt_baro;
+    arr.altFill = 'gps';      // no usable GNSS altitude -> baro for both
+  }
   for (let i = 0; i < n; i++) {
     const a = Math.max(0, i - win), b = Math.min(n - 1, i + win);
     const dt = (ts[b] - ts[a]) / 1000;
+    arr[i].vz_b = 0; arr[i].vz_g = 0;
     if (dt <= 0) continue;
     const d = hav(arr[a].lat, arr[a].lon, arr[b].lat, arr[b].lon);
     arr[i].gs_kmh = Math.round((d / dt) * 3.6 * 1000) / 1000;
-    arr[i].vz_ms  = Math.round((arr[b].alt_baro - arr[a].alt_baro) / dt * 1000) / 1000;
+    arr[i].vz_b = Math.round((arr[b].alt_baro - arr[a].alt_baro) / dt * 1000) / 1000;
+    arr[i].vz_g = Math.round((arr[b].alt_gps  - arr[a].alt_gps)  / dt * 1000) / 1000;
   }
+  applyVarioSource(arr);
+}
+// vz_ms always follows the selected altitude source, so the vario (HUD,
+// chart, track colours, thermal stats) describes the same altitude trace
+// that is drawn. It used to be baro-only: with the track drawn at GPS
+// altitude the two could disagree by up to 1 m/s on phone logs.
+function applyVarioSource(arr) {
+  const g = state.altSrc === 'gps';
+  for (let i = 0; i < arr.length; i++) arr[i].vz_ms = g ? arr[i].vz_g : arr[i].vz_b;
 }
 
 // ---------------------------------------------------------------------------
@@ -2670,7 +2810,9 @@ function parseIGC(text) {
   // timestamps stay monotonic.
   let prevSec = -1;
   let dayOffsetMs = 0;
+  const cLines = [];       // task declaration (C records), parsed below
   for (const line of lines) {
+    if (line[0] === 'C' && /^C\d/.test(line)) { cLines.push(line); continue; }
     if (line.startsWith('HFDTE')) {
       const digits = line.replace(/\D/g, '').slice(0, 6);
       if (digits.length === 6) {
@@ -2707,6 +2849,7 @@ function parseIGC(text) {
     }
   }
   deriveSpeeds(out);
+  meta.task = parseIgcTask(cLines);
   out.meta = meta;
   return out;
 }
@@ -2815,12 +2958,12 @@ function parseFlightFile(text, filename) {
 // corrupt / stale blob can never wedge the app.
 const PREFS_STORAGE_KEY = 'fv_prefs_v1';
 const PERSIST_KEYS = [
-  'altSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown', 'varioGlide',
+  'altSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown', 'varioGlide', 'showLegend', 'lowAglM',
   'exag', 'trackWidth', 'tube3d', 'smoothSubdiv', 'smoothTension',
   'kmlRateHz', 'spiralReconOn', 'spiralMode', 'spiralTurnsPerSec',
   'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed', 'autoSpeed',
   'swapButtons', 'showHud', 'hudCompact', 'showChart', 'chartMetric', 'camStyle',
-  'autoTrim', 'cmpAlign', 'airspaceShow', 'showAltLine', 'pilotLabel',
+  'autoTrim', 'cmpAlign', 'airspaceShow', 'taskShow', 'showAltLine', 'pilotLabel',
   'orbitSpeedDeg', 'orbitResumeSec', 'showXcTri', 'showCurtain',
   'recordFullUi', 'curtainFadeSec', 'trackFadeOn', 'trackHoldSec',
   'curtainFadeOn', 'curtainHoldSec',
@@ -2866,6 +3009,9 @@ const rawState = {
   colorMode: 'vario',   // 'vario' | 'single'
   varioMaxUp: 2.5,      // m/s -- saturates red at this climb rate
   varioMaxDown: 3,      // m/s -- saturates violet at this sink rate
+  taskShow: true,       // task cylinders / waypoints on the map
+  lowAglM: 50,          // m AGL -- in-flight stretches below it are flagged
+  showLegend: true,     // vario colour key on the map's left edge
   varioGlide: 1,        // m/s -- the wing's own sink in still air; the
                         //   colour ramp's green centre (0 = centre on zero)
   singleColor: [0, 255, 0],     // pure green
@@ -3122,6 +3268,68 @@ function varioColor(vz) {
   return [Math.round(a[1] + (b[1] - a[1]) * t),
           Math.round(a[2] + (b[2] - a[2]) * t),
           Math.round(a[3] + (b[3] - a[3]) * t)];
+}
+
+// Colour key for the vario ramp (left edge of the map). Redrawn only when
+// something it depends on changes; called every frame, costs one string
+// compare otherwise.
+let _legendSig = '';
+function legendVisible() {
+  return state.showLegend && state.colorMode !== 'single' && N > 1
+    && !(airspaceViolations && state.airspaceShow);
+}
+function updateLegend() {
+  const cv = document.getElementById('varioLegend');
+  if (!cv) return;
+  const vis = legendVisible();
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const sig = vis ? `${state.varioMaxUp}|${state.varioMaxDown}|${state.varioGlide}|${state.units}|${dpr}` : 'off';
+  if (sig === _legendSig) return;
+  _legendSig = sig;
+  cv.classList.toggle('hidden', !vis);
+  if (!vis) return;
+  const W = 66, H = 168;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const c = cv.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = 'rgba(18, 22, 30, 0.78)';
+  c.strokeStyle = 'rgba(255,255,255,0.12)';
+  roundRectPath(c, 0.5, 0.5, W - 1, H - 1, 9);
+  c.fill(); c.stroke();
+  c.font = '600 9px -apple-system, "Segoe UI", sans-serif';
+  c.fillStyle = '#9aa3b2';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(U.vzLabel().toUpperCase(), W / 2, 11);
+  const up = state.varioMaxUp, dn = state.varioMaxDown;
+  const top = 24, bot = H - 12, bx = 9, bw = 9;
+  const yOf = v => top + (up - v) / (up + dn) * (bot - top);
+  for (let y = top; y < bot; y++) {
+    const k = varioColor(up - (y - top + 0.5) / (bot - top) * (up + dn));
+    c.fillStyle = `rgb(${k[0]},${k[1]},${k[2]})`;
+    c.fillRect(bx, y, bw, 1.02);
+  }
+  const fmt = v => {
+    const x = U.vzConv(v);
+    const t = state.units === 'metric' ? String(Math.round(x * 10) / 10) : String(Math.round(x));
+    return (v > 0 ? '+' : '') + t.replace('-', '\u2212');
+  };
+  c.font = '10px -apple-system, "Segoe UI", sans-serif';
+  c.textAlign = 'left';
+  const marks = [[up, fmt(up)], [-dn, fmt(-dn)], [0, '0']];
+  const g = Math.max(0, state.varioGlide);
+  if (g > 0.05 && g < dn) marks.push([-g, 'glide']);
+  for (let v = 1; v < up - 0.4; v++) marks.push([v, fmt(v)]);
+  let used = [];
+  for (const [v, t] of marks) {
+    const y = yOf(v);
+    if (used.some(u => Math.abs(u - y) < 11)) continue;
+    used.push(y);
+    c.fillStyle = 'rgba(255,255,255,0.55)';
+    c.fillRect(bx + bw, Math.round(y) - 0.5, 4, 1);
+    c.fillStyle = '#e6e9ef';
+    c.fillText(t, bx + bw + 7, Math.min(H - 7, Math.max(top, y)));
+  }
 }
 
 // Smoothed vario for coloring (7-sample window) so the gradient is calm.
@@ -4497,7 +4705,137 @@ function finishSiteDraw(commit) {
 }
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && siteDraw) finishSiteDraw(false);
+  else if (e.key === 'Escape' && measure) stopMeasure();
 });
+
+// ---------------------------------------------------------------------------
+// Measure tool: click two points on the map for distance, bearing and the
+// terrain height at both ends; with a flight loaded the read-out also says
+// what glide ratio the pilot would need from the current playback position
+// to reach the second point at ground level ("was I high enough to make
+// it over there?"). Like site drawing it works top-down with drag-to-pan,
+// because a click on tilted 3-D terrain picks a spot offset from the one
+// under the cursor; the previous view comes back on Done / Esc.
+// ---------------------------------------------------------------------------
+let measure = null;        // { pts: [{lon, lat, elev}] } while the tool is on
+let _measureCam = null;
+async function demElevAt(lon, lat) {
+  const { tx, ty, px, py } = lonLatToTilePixel(lon, lat, TERRARIUM_ZOOM);
+  const data = await fetchTerrariumTile(TERRARIUM_ZOOM, tx, ty);
+  return data ? decodeTerrariumPixel(data, px, py) : NaN;
+}
+function measureGeoJSON() {
+  const feats = [];
+  const pts = measure ? measure.pts : [];
+  pts.forEach((p, k) => feats.push({ type: 'Feature',
+    properties: { label: k === 0 ? 'A' : 'B' },
+    geometry: { type: 'Point', coordinates: [p.lon, p.lat] } }));
+  if (pts.length === 2) feats.push({ type: 'Feature', properties: {},
+    geometry: { type: 'LineString',
+      coordinates: [[pts[0].lon, pts[0].lat], [pts[1].lon, pts[1].lat]] } });
+  return { type: 'FeatureCollection', features: feats };
+}
+function applyMeasureLayer() {
+  if (!map || !mapReady) return;
+  try {
+    const src = map.getSource('measure');
+    if (!src) {
+      map.addSource('measure', { type: 'geojson', data: measureGeoJSON() });
+      map.addLayer({ id: 'measure-line', type: 'line', source: 'measure',
+        filter: ['==', ['geometry-type'], 'LineString'],
+        paint: { 'line-color': '#fde047', 'line-width': 2.5,
+                 'line-dasharray': [2, 1.5] } });
+      map.addLayer({ id: 'measure-pt', type: 'circle', source: 'measure',
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: { 'circle-radius': 6, 'circle-color': '#fde047',
+                 'circle-stroke-color': '#111', 'circle-stroke-width': 1.5 } });
+      map.addLayer({ id: 'measure-label', type: 'symbol', source: 'measure',
+        filter: ['==', ['geometry-type'], 'Point'],
+        layout: { 'text-field': ['get', 'label'], 'text-font': ['Noto Sans Bold'],
+                  'text-size': 12, 'text-offset': [0, -1.2], 'text-anchor': 'bottom',
+                  'text-allow-overlap': true },
+        paint: { 'text-color': '#fde047',
+                 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.4 } });
+    } else {
+      src.setData(measureGeoJSON());
+    }
+  } catch (e) { console.warn('measure layer failed:', e); }
+  renderDirty = true;
+}
+function renderMeasure() {
+  const el = document.getElementById('measureText');
+  if (!el) return;
+  const pts = measure ? measure.pts : [];
+  const alt = m => `${U.altConv(m).toFixed(0)} ${U.altLabel()}`;
+  const km = m => `${U.distConv(m / 1000).toFixed(m < 10000 ? 2 : 1)} ${U.distLabel()}`;
+  if (!pts.length) { el.textContent = 'Click two points on the map'; return; }
+  if (pts.length === 1) {
+    el.innerHTML = `A: ground ${isFinite(pts[0].elev) ? alt(pts[0].elev) : '\u2026'}`
+      + ` <span class="dim">\u00b7 click the second point</span>`;
+    return;
+  }
+  const [a, b] = pts;
+  const d = hav(a.lat, a.lon, b.lat, b.lon);
+  let html = `<b>${km(d)}</b> \u00b7 ${Math.round(bearingDeg(a.lat, a.lon, b.lat, b.lon))}\u00b0`;
+  if (isFinite(a.elev) && isFinite(b.elev)) {
+    const dh = b.elev - a.elev;
+    html += ` \u00b7 ground ${alt(a.elev)} \u2192 ${alt(b.elev)} (${dh >= 0 ? '+' : '\u2212'}${alt(Math.abs(dh))})`;
+  }
+  if (N > 1 && isFinite(b.elev)) {
+    const i = findIdx(state.currentMs), f = fixes[i];
+    const dp = hav(f.lat, f.lon, b.lat, b.lon);
+    const h = altOf(f) + state.altOffset - b.elev;
+    html += `<br><span class="dim">Pilot now \u2192 B: ${km(dp)}, `
+      + (h > 1 ? `${alt(h)} above it \u2014 needs L/D ${(dp / h).toFixed(1)}`
+               : `${alt(Math.abs(h))} below it`) + `</span>`;
+  }
+  el.innerHTML = html;
+}
+function startMeasure() {
+  if (measure || !map || !mapReady) return;
+  if (siteDraw) finishSiteDraw(false);
+  measure = { pts: [] };
+  document.body.classList.add('measuring');
+  _measureCam = { pitch: map.getPitch(), bearing: map.getBearing(),
+                  zoom: map.getZoom(), follow: state.follow, playing: state.playing };
+  if (state.playing) setPlaying(false);
+  if (state.follow && window._setFollowPilot) window._setFollowPilot(false);
+  if (window._setSiteDrawPan) window._setSiteDrawPan(true);
+  map.easeTo({ pitch: 0, duration: 400 });
+  const b = document.getElementById('btnMeasure');
+  if (b) b.classList.add('on');
+  applyMeasureLayer(); renderMeasure();
+}
+function stopMeasure() {
+  if (!measure) return;
+  measure = null;
+  document.body.classList.remove('measuring');
+  if (window._setSiteDrawPan) window._setSiteDrawPan(false);
+  const saved = _measureCam; _measureCam = null;
+  if (saved && map) {
+    map.easeTo({ pitch: saved.pitch, bearing: saved.bearing, zoom: saved.zoom, duration: 400 });
+    setTimeout(() => {
+      if (saved.follow && window._setFollowPilot) window._setFollowPilot(true);
+      if (saved.playing) setPlaying(true);
+    }, 450);
+  }
+  const b = document.getElementById('btnMeasure');
+  if (b) b.classList.remove('on');
+  applyMeasureLayer();
+}
+{
+  const c = document.getElementById('measureClear'), d = document.getElementById('measureDone');
+  if (c) c.onclick = () => { if (measure) { measure.pts = []; applyMeasureLayer(); renderMeasure(); } };
+  if (d) d.onclick = () => stopMeasure();
+}
+function measureClick(lngLat) {
+  if (!measure) return;
+  if (measure.pts.length >= 2) measure.pts = [];
+  const p = { lon: lngLat.lng, lat: lngLat.lat, elev: NaN };
+  measure.pts.push(p);
+  applyMeasureLayer(); renderMeasure();
+  demElevAt(p.lon, p.lat).then(v => { p.elev = v; if (measure) renderMeasure(); });
+}
 loadSites();
 
 function initMap() {
@@ -4547,6 +4885,7 @@ function initMap() {
   map.addControl(new AppControl([
     { id: 'btnFollow', title: 'Toggle follow pilot (C)', icon: '&#x2316;', onClick: centerOnPilot },
     { id: 'btnFit', title: 'Fit whole track (R)', icon: '&#x2922;', onClick: () => fitTrack() },
+    { id: 'btnMeasure', title: 'Measure distance, bearing and height between two points', icon: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg>', onClick: () => { if (measure) stopMeasure(); else startMeasure(); } },
     { id: 'btnSwap', title: 'Swap mouse/touch drag controls', icon: '&#x21cc;', onClick: () => { if (window._setSwapButtons) window._setSwapButtons(!effSwapButtons()); } },
     { id: 'btnKk7', title: 'Toggle thermal / skyways overlay (thermal.kk7.ch)', icon: '&#x2668;', onClick: () => {
         state.kk7Show = !state.kk7Show;
@@ -4641,6 +4980,7 @@ function initMap() {
     applyKk7Layers();
     applyOpenAipLayer();
     applySitesLayer();
+    applyTaskLayer();
     applyMapLabels();
     configureMapZoom();
     if (window._wireMapGestures) window._wireMapGestures();
@@ -4656,6 +4996,7 @@ function initMap() {
   // (a point site commits on the first click); double-click closes a
   // polygon. Outside draw mode these handlers do nothing.
   map.on('click', e => {
+    if (measure && !siteDraw) { measureClick(e.lngLat); return; }
     if (!siteDraw) return;
     siteDraw.coords.push([e.lngLat.lng, e.lngLat.lat]);
     if (siteDraw.kind === 'point') finishSiteDraw(true);
@@ -5905,8 +6246,13 @@ function computeFlightStats() {
     const d = hav(f0.lat, f0.lon, fixes[i].lat, fixes[i].lon) / 1000;
     if (d > maxDistKm) maxDistKm = d;
   }
-  let thermalGain = 0;
-  for (const th of thermals) thermalGain += th.gainM;
+  let thermalGain = 0, thermalS = 0;
+  for (const th of thermals) { thermalGain += th.gainM; thermalS += th.durS; }
+  let glideM = 0, glideLoss = 0, glideS = 0;
+  for (const g of glides) {
+    glideM += g.distKm * 1000; glideS += g.durS;
+    if (g.dAlt < 0) glideLoss += -g.dAlt;
+  }
   const xc = computeXcScores();
   flightStats = {
     takeoffMs: tMs[takeoffIdx], landingMs: tMs[landingIdx],
@@ -5915,16 +6261,86 @@ function computeFlightStats() {
     takeoffAlt: altOf(f0), landingAlt: altOf(f1),
     maxClimb, maxSink, maxGs, totalAscent,
     trackKm: cumKm[N - 1], straightKm, maxDistKm,
-    thermalCount: thermals.length, thermalGain,
+    thermalCount: thermals.length, thermalGain, thermalS,
+    glideCount: glides.length, glideKm: glideM / 1000, glideS,
+    glideLd: glideLoss > 1 ? glideM / glideLoss : 0,
     xcFreeKm: xc ? xc.freeKm : 0,
     xcTri: xc ? xc.tri : null,
   };
 }
 
+// Glides: the stretches between thermals, from takeoff to landing. Each
+// gets its straight-line distance, altitude change, glide ratio and mean
+// ground speed -- the other half of a cross-country flight, next to the
+// thermal list. Short hops (< 60 s or < 400 m) are not listed.
+let glides = [];        // [{i0, i1, durS, distKm, dAlt, ld, kmh}]
+function detectGlides() {
+  glides = [];
+  if (N < 20 || landingIdx <= takeoffIdx) return;
+  const cuts = [takeoffIdx];
+  for (const th of thermals) {
+    if (th.i1 <= takeoffIdx || th.i0 >= landingIdx) continue;
+    cuts.push(Math.max(takeoffIdx, th.i0), Math.min(landingIdx, th.i1));
+  }
+  cuts.push(landingIdx);
+  for (let k = 0; k + 1 < cuts.length; k += 2) {
+    const i0 = cuts[k], i1 = cuts[k + 1];
+    if (i1 <= i0) continue;
+    const durS = (tMs[i1] - tMs[i0]) / 1000;
+    const distM = hav(fixes[i0].lat, fixes[i0].lon, fixes[i1].lat, fixes[i1].lon);
+    if (durS < 60 || distM < 400) continue;
+    const dAlt = altOf(fixes[i1]) - altOf(fixes[i0]);
+    glides.push({
+      i0, i1, durS, distKm: distM / 1000, dAlt,
+      ld: dAlt < -1 ? distM / -dAlt : Infinity,
+      kmh: distM / durS * 3.6,
+    });
+  }
+}
+
+// Low passes: in-flight stretches closer to the terrain than
+// state.lowAglM (DEM directly below the pilot). The first minute after
+// takeoff and the last 90 s before landing are ignored -- being low there
+// is the point. Needs the DEM samples, so it re-runs when they arrive.
+let lowPasses = [];     // [{i0, i1, minAgl, iMin}]
+let minAglInfo = null;  // {agl, i} lowest in-flight AGL, or null
+function computeLowPasses() {
+  lowPasses = []; minAglInfo = null;
+  if (!groundAlt || N < 20 || landingIdx <= takeoffIdx) return;
+  const tA = tMs[takeoffIdx] + 60000, tB = tMs[landingIdx] - 90000;
+  if (tB <= tA) return;
+  const thr = state.lowAglM;
+  let cur = null;
+  for (let i = takeoffIdx; i <= landingIdx; i++) {
+    if (tMs[i] < tA || tMs[i] > tB) continue;
+    const g = groundAlt[i];
+    if (Number.isNaN(g)) continue;
+    const agl = altOf(fixes[i]) + state.altOffset - g;
+    if (!minAglInfo || agl < minAglInfo.agl) minAglInfo = { agl, i };
+    if (thr > 0 && agl < thr) {
+      if (cur && (tMs[i] - tMs[cur.i1]) / 1000 <= 20) {
+        cur.i1 = i;
+        if (agl < cur.minAgl) { cur.minAgl = agl; cur.iMin = i; }
+      } else {
+        cur = { i0: i, i1: i, minAgl: agl, iMin: i };
+        lowPasses.push(cur);
+      }
+    }
+  }
+  lowPasses = lowPasses.filter(p => (tMs[p.i1] - tMs[p.i0]) / 1000 >= 5);
+}
+function refreshLowPasses() {
+  computeLowPasses();
+  renderStatsPanel();
+  buildProgressTicks();
+}
+
 function analyzeFlight() {
   detectTakeoffLanding();
   detectThermals();
+  detectGlides();
   computeFlightStats();
+  computeLowPasses();
 }
 
 // ============================================================================
@@ -5951,6 +6367,7 @@ const fvChart = {
   model: null,        // { xs, series[], yLo, yHi, yTitle, zeroLine }
   geo: null,          // plot rect in CSS px + visible x range: {l,t,w,h,r0,r1}
   hoverX: null,       // CSS px inside #chart, or null
+  sel: null,          // selected range [x0, x1] in shifted ms, or null
   raf: 0,
 };
 function chartInit() {
@@ -6171,6 +6588,19 @@ function drawChart() {
     }
   }
 
+  // ---- selected range (shift + drag) ----
+  if (fvChart.sel) {
+    const a = Math.max(L, Math.min(L + pw, xPx(fvChart.sel[0])));
+    const b = Math.max(L, Math.min(L + pw, xPx(fvChart.sel[1])));
+    if (b > a) {
+      ctx.fillStyle = 'rgba(96, 165, 250, 0.16)';
+      ctx.fillRect(a, T, b - a, ph);
+      ctx.fillStyle = 'rgba(96, 165, 250, 0.9)';
+      ctx.fillRect(Math.round(a), T, 1, ph);
+      ctx.fillRect(Math.round(b) - 1, T, 1, ph);
+    }
+  }
+
   // ---- hover read-out ----
   const hx = fvChart.hoverX;
   if (hx != null && hx >= L && hx <= L + pw) {
@@ -6386,16 +6816,23 @@ function updateHud(i) {
   // Uses the same alt offset the user dialed in, so AGL reads ~0 on the
   // ground once the track is aligned.
   const g = groundAlt ? groundAlt[i] : NaN;
+  const aglM = Number.isNaN(g) ? NaN : altOf(f) + state.altOffset - g;
   elAgl().textContent = Number.isNaN(g)
     ? '…'
-    : `${U.altConv(altOf(f) + state.altOffset - g).toFixed(0)} ${U.altLabel()}`;
+    : `${U.altConv(aglM).toFixed(0)} ${U.altLabel()}`;
+  elAgl().classList.toggle('low', state.lowAglM > 0 && aglM < state.lowAglM
+    && i > takeoffIdx && i < landingIdx
+    && tMs[i] > tMs[takeoffIdx] + 60000 && tMs[i] < tMs[landingIdx] - 90000);
 
   elGs().textContent   = `${U.gsConv(f.gs_kmh).toFixed(1)} ${U.gsLabel()}`;
-  elVz().textContent   = `${(f.vz_ms >= 0 ? '+' : '')}${U.vzConv(f.vz_ms).toFixed(U.vzPrec())} ${U.vzLabel()}`;
-
-  // Glide ratio over ground: horizontal speed / sink rate (smoothed vario
-  // so the number is readable). Only meaningful while sinking and moving.
+  // Same smoothed vario the track colour uses, so the number and the
+  // colour under the pilot agree (the raw per-fix value jittered).
   const vzS = smoothedVario(i);
+  const vzR = Math.abs(vzS) < 0.005 ? 0 : vzS;
+  elVz().textContent   = `${(vzR >= 0 ? '+' : '')}${U.vzConv(vzR).toFixed(U.vzPrec())} ${U.vzLabel()}`;
+
+  // Glide ratio over ground: horizontal speed / sink rate. Only
+  // meaningful while sinking and moving.
   const gsMs = f.gs_kmh / 3.6;
   if (vzS < -0.15 && gsMs > 1) {
     const ld = gsMs / -vzS;
@@ -6473,6 +6910,12 @@ function renderStatsPanel() {
     rowsEl.innerHTML = '';
     thHead.style.display = 'none';
     thList.innerHTML = '';
+    for (const id of ['lowHead', 'glideHead', 'taskHead']) {
+      const el = document.getElementById(id); if (el) el.style.display = 'none';
+    }
+    for (const id of ['lowList', 'glideList', 'taskList']) {
+      const el = document.getElementById(id); if (el) el.innerHTML = '';
+    }
     return;
   }
 
@@ -6510,6 +6953,20 @@ function renderStatsPanel() {
   if (s.thermalCount > 0) {
     rows.push(row('Thermals',
       `${s.thermalCount} · +${alt(s.thermalGain)}`));
+    if (s.airtimeS > 0 && s.thermalS > 0) {
+      const avg = s.thermalGain / s.thermalS;
+      rows.push(row('Circling',
+        `${Math.round(s.thermalS / s.airtimeS * 100)}% · avg +${U.vzConv(avg).toFixed(state.units === 'metric' ? 1 : 0)} ${U.vzLabel()}`));
+    }
+  }
+  if (s.glideCount > 0 && s.glideS > 0) {
+    rows.push(row('Gliding',
+      `${s.glideLd > 0 ? 'L/D ' + (s.glideLd > 99 ? '>99' : s.glideLd.toFixed(1)) + ' · ' : ''}`
+      + `${U.gsConv(s.glideKm / s.glideS * 3600).toFixed(0)} ${U.gsLabel()}`));
+  }
+  if (minAglInfo) {
+    rows.push(row('Min AGL',
+      `${alt(Math.max(0, minAglInfo.agl))} @ ${fmtLocalHMS(tMs[minAglInfo.i])}`));
   }
   // XC scoring (XContest-style, computed locally).
   if (s.xcFreeKm > 0.5) {
@@ -6566,6 +7023,96 @@ function renderStatsPanel() {
   } else {
     windHead.style.display = 'none';
     windList.innerHTML = '';
+  }
+
+  const jumpTo = ms => {
+    seekToMs(ms);
+    pushLayers(pilotAt(state.currentMs), pilotHeading(state.currentMs));
+    updateHud(findIdx(state.currentMs));
+  };
+  const wireRows = (box, attr, fn) => {
+    for (const el of box.querySelectorAll(`.thermal[${attr}]`)) {
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+      });
+      el.addEventListener('click', () => fn(parseInt(el.getAttribute(attr), 10)));
+    }
+  };
+  const mmss = sec => {
+    const d = Math.round(sec);
+    return `${Math.floor(d / 60)}:${d % 60 < 10 ? '0' : ''}${d % 60}`;
+  };
+
+  // Task turnpoints: when each cylinder was first entered, in order.
+  const tkHead = document.getElementById('taskHead');
+  const tkList = document.getElementById('taskList');
+  if (tkHead && tkList) {
+    if (task && taskResult) {
+      tkHead.style.display = '';
+      tkHead.textContent = `Task \u00b7 ${taskResult.count}/${task.tps.length} turnpoints \u00b7 `
+        + `${dist(taskResult.distKm)} (click to jump)`;
+      tkList.innerHTML = task.tps.map((tp, k) => {
+        const ri = taskResult.reachedIdx[k];
+        const r = tp.radius >= 1000 ? (tp.radius / 1000).toFixed(tp.radius % 1000 ? 1 : 0) + ' km'
+                                    : Math.round(tp.radius) + ' m';
+        return `<div class="thermal" data-tp="${k}" role="button" tabindex="0">`
+          + `<span>${k + 1} ${esc(tp.name || tp.kind)} <span style="color:var(--fg-mute)">${r}</span></span>`
+          + `<span${ri >= 0 ? ' class="gain"' : ' style="color:var(--fg-mute)"'}>`
+          + `${ri >= 0 ? fmtLocalHMS(tMs[ri]) : '\u2014'}</span></div>`;
+      }).join('');
+      wireRows(tkList, 'data-tp', k => {
+        const ri = taskResult.reachedIdx[k];
+        if (ri >= 0) jumpTo(tMs[ri]);
+      });
+    } else {
+      tkHead.style.display = 'none';
+      tkList.innerHTML = '';
+    }
+  }
+
+  // Low passes (amber): in-flight stretches under the Low AGL alert height.
+  const lowHead = document.getElementById('lowHead');
+  const lowList = document.getElementById('lowList');
+  if (lowHead && lowList) {
+    if (lowPasses.length) {
+      lowHead.style.display = '';
+      lowHead.textContent = `Low passes under ${alt(state.lowAglM)} AGL (click to jump)`;
+      lowList.innerHTML = lowPasses.map((p, k) =>
+        `<div class="thermal" data-low="${k}" role="button" tabindex="0">`
+        + `<span>${fmtLocalHMS(tMs[p.i0])} · ${mmss((tMs[p.i1] - tMs[p.i0]) / 1000)}</span>`
+        + `<span style="color:var(--warn)">min ${alt(Math.max(0, p.minAgl))}</span>`
+        + `</div>`).join('');
+      wireRows(lowList, 'data-low', k => { if (lowPasses[k]) jumpTo(tMs[lowPasses[k].iMin]); });
+    } else {
+      lowHead.style.display = 'none';
+      lowList.innerHTML = '';
+    }
+  }
+
+  // Glides between thermals.
+  const glHead = document.getElementById('glideHead');
+  const glList = document.getElementById('glideList');
+  if (glHead && glList) {
+    if (glides.length) {
+      glHead.style.display = '';
+      glList.innerHTML =
+        `<div class="thermal thHead"><span>start</span><span>dur</span>`
+        + `<span>${U.distLabel()}</span><span>&Delta; ${U.altLabel()}</span>`
+        + `<span>L/D</span><span>${U.gsLabel()}</span></div>`
+        + glides.map((g, k) =>
+          `<div class="thermal" data-gl="${k}" role="button" tabindex="0">`
+          + `<span>${fmtLocalHMS(tMs[g.i0])}</span>`
+          + `<span>${mmss(g.durS)}</span>`
+          + `<span>${U.distConv(g.distKm).toFixed(1)}</span>`
+          + `<span>${g.dAlt >= 0 ? '+' : '\u2212'}${U.altConv(Math.abs(g.dAlt)).toFixed(0)}</span>`
+          + `<span class="gain">${isFinite(g.ld) ? (g.ld > 99 ? '>99' : g.ld.toFixed(1)) : '\u221e'}</span>`
+          + `<span>${U.gsConv(g.kmh).toFixed(0)}</span>`
+          + `</div>`).join('');
+      wireRows(glList, 'data-gl', k => { if (glides[k]) jumpTo(tMs[glides[k].i0]); });
+    } else {
+      glHead.style.display = 'none';
+      glList.innerHTML = '';
+    }
   }
 
   if (thermals.length) {
@@ -6650,6 +7197,33 @@ function buildProgressTicks() {
     };
     mk('takeoff', flightStats.takeoffMs, 'Takeoff');
     mk('maxalt', flightStats.maxAltMs, 'Max altitude');
+  }
+
+  // Task turnpoints reached: thin yellow ticks.
+  if (task && taskResult) {
+    const pct = ms => ((ms - T0) / (T1 - T0)) * 100;
+    taskResult.reachedIdx.forEach((ri, k) => {
+      if (ri < 0) return;
+      const el = document.createElement('div');
+      el.className = 'tick tp';
+      el.style.left = pct(tMs[ri]) + '%';
+      el.title = `Turnpoint ${k + 1}${task.tps[k].name ? ' ' + task.tps[k].name : ''}`;
+      box.appendChild(el);
+    });
+  }
+
+  // Low passes: amber marks hanging below the vario strip.
+  {
+    const pct = ms => ((ms - T0) / (T1 - T0)) * 100;
+    for (const p of lowPasses) {
+      const el = document.createElement('div');
+      el.className = 'tick lowagl';
+      const l = pct(tMs[p.i0]);
+      el.style.left = l + '%';
+      el.style.width = Math.max(0.3, pct(tMs[p.i1]) - l) + '%';
+      el.title = 'Low pass';
+      box.appendChild(el);
+    }
   }
 
   // Airspace violations: red marks riding above the vario strip.
@@ -6864,6 +7438,7 @@ function tick(nowMs) {
       pushLayers(pos, head);
       const i = findIdx(state.currentMs);
       updateHud(i);
+      updateLegend();
       if (state.follow) {
         // Pause recentering during a pinch: setCenter -> jumpTo -> stop()
         // would cancel the two-finger gesture on the very frame it forms.
@@ -6917,6 +7492,7 @@ function tick(nowMs) {
     if (!tick._lastErr || nowMs - tick._lastErr > 1000) {
       tick._lastErr = nowMs;
       console.error('[tick] frame failed:', e);
+      reportRuntimeError(e);
     }
   }
   lastFrame = nowMs;
@@ -6955,12 +7531,22 @@ function setupAppUi() {
   }
   initToggle('altSrc', 'altSrc', () => {
     pathDataCache = null; spiralCache = null;
+    // The vario follows the altitude source: re-derive it, then everything
+    // computed from it (thermal gains, stats, glides, timeline colours).
+    applyVarioSource(fixes);
+    for (const tr of cmpTracks) applyVarioSource(tr.fixes);
+    cmpRev++;
+    analyzeFlight();
+    buildProgressTicks();
     refreshChart(); autoAlignGround(); renderStatsPanel();
   });
   initToggle('units',  'units',  () => {
     refreshChart();
     applyMapLabels();     // peak elevations switch m <-> ft
     renderStatsPanel();   // stats values carry units; re-render live
+    const lv = document.getElementById('lowAglV');
+    if (lv) lv.textContent = state.lowAglM > 0
+      ? `${U.altConv(state.lowAglM).toFixed(0)} ${U.altLabel()}` : 'off';
   });
   initToggle('base',   'base',   () => {
     map.setLayoutProperty('sat', 'visibility', state.base === 'sat' ? 'visible' : 'none');
@@ -7100,6 +7686,19 @@ function setupAppUi() {
   const xcTriCb = document.getElementById('xcTriCb');
   xcTriCb.checked = state.showXcTri;
   xcTriCb.addEventListener('change', e => { state.showXcTri = e.target.checked; });
+  const lowAglSlider = document.getElementById('lowAgl');
+  const lowAglV = document.getElementById('lowAglV');
+  const lowAglText = () => state.lowAglM > 0
+    ? `${U.altConv(state.lowAglM).toFixed(0)} ${U.altLabel()}` : 'off';
+  lowAglSlider.addEventListener('input', e => {
+    state.lowAglM = parseInt(e.target.value, 10) || 0;
+    lowAglV.textContent = lowAglText();
+    if (N > 1) refreshLowPasses();
+  });
+  lowAglV.textContent = lowAglText();
+  const legendCb = document.getElementById('legendCb');
+  legendCb.checked = state.showLegend;
+  legendCb.addEventListener('change', e => { state.showLegend = e.target.checked; });
   // mm:ss formatter shared by the track/curtain hold + fade-time sliders.
   // Unlike the old single trail-fade slider, 0 is now a plain valid value
   // (an instant hold or an instant fade) rather than a special "off" --
@@ -7608,6 +8207,7 @@ function setupAppUi() {
     pathDataCache = null;
     spiralCache = null;
     refreshChart();   // pilot trace shifts with offset
+    if (N > 1 && groundAlt) refreshLowPasses();   // AGL moves with it
   }
   window.applyAltOffset = applyAltOffset;
   altOffSlider.addEventListener('input', e => applyAltOffset(parseFloat(e.target.value)));
@@ -7882,6 +8482,7 @@ function setupAppUi() {
       ['smoothTension', state.smoothTension], ['kmlRateHz', state.kmlRateHz],
       ['spiralTPS', state.spiralTurnsPerSec], ['spiralThr', state.spiralThreshold],
       ['trackHold', state.trackHoldSec], ['trailFade', state.trailFadeSec],
+      ['lowAgl', state.lowAglM],
       ['maxUp', state.varioMaxUp], ['maxDown', state.varioMaxDown],
       ['glideSink', state.varioGlide],
       ['pilotSize', state.pilotSize], ['orbitSpeed', state.orbitSpeedDeg],
@@ -7942,8 +8543,8 @@ function setupAppUi() {
     setFollow(true);
     setSwapButtons(FACTORY_STATE.swapButtons);
     for (const [id, key] of [['autoTrim', 'autoTrim'], ['autoSpeedCb', 'autoSpeed'],
-        ['airspaceShow', 'airspaceShow'], ['altLineCb', 'showAltLine'],
-        ['xcTriCb', 'showXcTri'], ['curtainCb', 'showCurtain'],
+        ['airspaceShow', 'airspaceShow'], ['taskShowCb', 'taskShow'], ['altLineCb', 'showAltLine'],
+        ['xcTriCb', 'showXcTri'], ['curtainCb', 'showCurtain'], ['legendCb', 'showLegend'],
         ['trackFadeCb', 'trackFadeOn'], ['curtainFadeCb', 'curtainFadeOn'],
         ['kk7ShowCb', 'kk7Show'], ['kk7ThermalsCb', 'kk7Thermals'],
         ['kk7SkywaysCb', 'kk7Skyways'], ['openaipShowCb', 'openaipShow'],
@@ -8670,26 +9271,111 @@ function setupAppUi() {
   // seeking, so mouse handlers stand down right after any touch.
   let chartLastTouchTs = 0;
   const ghostMouse = () => Date.now() - chartLastTouchTs < 800;
+  let chartSelSkipClick = false;   // the click that ends a range drag
   chartEl.addEventListener('click', (ev) => {
-    if (ghostMouse()) return;
+    if (ghostMouse() || chartSelSkipClick || ev.shiftKey) return;
     handleChartSeek(ev.clientX);
   });
 
   // Mouse scrubbing: press and drag anywhere in the chart to seek
   // continuously. Playback pauses while scrubbing (same behaviour as the
   // progress slider) and resumes on release.
+  // Shift + drag selects a time range instead: the band gets a read-out
+  // (duration, altitude change, distance, glide ratio, mean climb) with
+  // buttons to loop or zoom it.
+  const chartSelEl = document.getElementById('chartSel');
+  const chartXAt = clientX => {
+    const g = fvChart.geo;
+    if (!g) return NaN;
+    const r = chartEl.getBoundingClientRect();
+    const px = Math.max(0, Math.min(g.w, clientX - r.left - g.l));
+    return g.r0 + (px / g.w) * (g.r1 - g.r0);
+  };
+  const renderChartSel = () => {
+    const sel = fvChart.sel;
+    if (!sel || N < 2) { chartSelEl.classList.add('hidden'); return; }
+    const m0 = Math.max(T0, tzUnshiftMs(sel[0])), m1 = Math.min(T1, tzUnshiftMs(sel[1]));
+    const i0 = findIdx(m0), i1 = findIdx(m1);
+    if (i1 <= i0) { chartSelEl.classList.add('hidden'); return; }
+    const durS = (tMs[i1] - tMs[i0]) / 1000;
+    const dAlt = altOf(fixes[i1]) - altOf(fixes[i0]);
+    const distM = hav(fixes[i0].lat, fixes[i0].lon, fixes[i1].lat, fixes[i1].lon);
+    const pathKm = cumKm[i1] - cumKm[i0];
+    const d = Math.round(durS);
+    const dur = d >= 3600
+      ? `${Math.floor(d / 3600)}:${String(Math.floor(d % 3600 / 60)).padStart(2, '0')}:${String(d % 60).padStart(2, '0')}`
+      : `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
+    const bits = [
+      `${fmtLocalHMS(tMs[i0])} \u2013 ${fmtLocalHMS(tMs[i1])} (${dur})`,
+      `${dAlt >= 0 ? '+' : '\u2212'}${U.altConv(Math.abs(dAlt)).toFixed(0)} ${U.altLabel()}`,
+      `${(dAlt >= 0 ? '+' : '\u2212')}${Math.abs(U.vzConv(dAlt / durS)).toFixed(state.units === 'metric' ? 1 : 0)} ${U.vzLabel()}`,
+      `${U.distConv(distM / 1000).toFixed(1)} ${U.distLabel()} straight`,
+      `${U.distConv(pathKm).toFixed(1)} flown`,
+    ];
+    if (dAlt < -1) bits.push(`L/D ${Math.min(99, distM / -dAlt).toFixed(1)}`);
+    bits.push(`${U.gsConv(distM / durS * 3.6).toFixed(0)} ${U.gsLabel()}`);
+    document.getElementById('chartSelText').textContent = bits.join('  \u00b7  ');
+    chartSelEl.classList.remove('hidden');
+  };
+  const clearChartSel = () => {
+    fvChart.sel = null; chartSelEl.classList.add('hidden'); drawChart();
+  };
+  window._clearChartSel = clearChartSel;
+  for (const ev of ['mousedown', 'click', 'dblclick', 'touchstart']) {
+    chartSelEl.addEventListener(ev, e => e.stopPropagation());
+  }
+  document.getElementById('chartSelClear').onclick = clearChartSel;
+  document.getElementById('chartSelLoop').onclick = () => {
+    if (!fvChart.sel) return;
+    loopAMs = Math.max(T0 + 1, tzUnshiftMs(fvChart.sel[0]));
+    loopBMs = Math.min(T1, tzUnshiftMs(fvChart.sel[1]));
+    updateLoopBand();
+    seekToMs(loopAMs);
+    setPlaying(true);
+    showStatus(`Loop ${fmtSec((loopAMs - T0) / 1000)} \u2013 ${fmtSec((loopBMs - T0) / 1000)}`);
+  };
+  document.getElementById('chartSelZoom').onclick = () => {
+    if (!fvChart.sel) return;
+    chartXRange = [fvChart.sel[0], fvChart.sel[1]];
+    drawChart(); syncChartCursor();
+  };
+  let chartSelDrag = null;     // anchor x (shifted ms) while shift-dragging
+
   let chartScrub = false, chartScrubWasPlaying = false;
   chartEl.addEventListener('mousedown', (e) => {
     if (e.button !== 0 || ghostMouse()) return;
+    if (e.shiftKey && N > 1) {
+      const x = chartXAt(e.clientX);
+      if (isFinite(x)) { chartSelDrag = x; fvChart.sel = null; e.preventDefault(); }
+      return;
+    }
     chartScrub = true;
     chartScrubWasPlaying = state.playing;
     state.playing = false;
     handleChartSeek(e.clientX);
   });
   window.addEventListener('mousemove', (e) => {
+    if (chartSelDrag != null) {
+      const x = chartXAt(e.clientX);
+      if (isFinite(x)) {
+        fvChart.sel = [Math.min(chartSelDrag, x), Math.max(chartSelDrag, x)];
+        scheduleChartDraw();
+      }
+      return;
+    }
     if (chartScrub) handleChartSeek(e.clientX);
   });
   window.addEventListener('mouseup', () => {
+    if (chartSelDrag != null) {
+      chartSelDrag = null;
+      chartSelSkipClick = true;
+      setTimeout(() => { chartSelSkipClick = false; }, 0);
+      // A stray shift-click (no real drag) clears instead of selecting.
+      if (fvChart.sel && fvChart.sel[1] - fvChart.sel[0] < 3000) fvChart.sel = null;
+      renderChartSel();
+      drawChart();
+      return;
+    }
     if (!chartScrub) return;
     chartScrub = false;
     if (chartScrubWasPlaying) setPlaying(true);
@@ -8828,8 +9514,7 @@ function setupAppUi() {
     if (!document.getElementById('landing').classList.contains('hidden')) return;
     e.preventDefault();
     dropOverlay.classList.remove('active');
-    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) loadFile(f);
+    if (e.dataTransfer && e.dataTransfer.files) loadFiles(e.dataTransfer.files);
   });
 
   // Restore the persisted chart-open state, wire the feature groups that
@@ -8837,6 +9522,7 @@ function setupAppUi() {
   updateChartPanel();
   wireCmpUi();
   wireAirspaceUi();
+  wireTaskUi();
   wireExportUi();
   wireOfflineUi();
   wireSitesUi();
@@ -9532,11 +10218,26 @@ function dirTrackAdjust() {
     (latMax - latMin) * 111320);
   return Math.max(0, Math.min(3, Math.log2(8000 / Math.max(500, diag))));
 }
+// Fast-playback pull-back. The phase zooms are tuned for watching at
+// 1-10x; at 30x and beyond the same close framing sends the terrain
+// racing past and reduces a thermal to a blur. Above 8x the camera backs
+// off with the speed (0.8 zoom level per doubling, up to ~3 levels at
+// 120x), so the ground moves across the screen at a watchable rate and
+// more of the route stays in view. Paused / slow playback is untouched.
+function dirSpeedAdjust() {
+  if (!state.playing || !(state.speed > 8)) return 0;
+  return -Math.min(3.2, 0.8 * Math.log2(state.speed / 8));
+}
+// From 20x a thermal lasts only a few seconds of watching: orbiting it and
+// re-framing for it reads as twitching, so fast playback keeps the calmer
+// glide framing throughout.
+function dirFastPlayback() { return state.playing && state.speed >= 20; }
 function dirZoomFor(phase) {
   const z = phase === 'intro' ? state.dirZoomIntro
           : phase === 'thermal' ? state.dirZoomThermal
           : state.dirZoomGlide;
-  return z == null ? null : z + dirZoomAdjust() + dirTrackAdjust();
+  return z == null ? null
+    : z + dirZoomAdjust() + dirTrackAdjust() + dirSpeedAdjust();
 }
 function dirPitchFor(phase) {
   return phase === 'intro' ? state.dirPitchIntro
@@ -9726,7 +10427,7 @@ function directorCamFrame(headingDeg, dtMs) {
   // glide after it...) releases the manual-zoom override,
   // but only once it has gone stale: a fresh zoom-in survives the next
   // boundary so the user can actually look at what they zoomed in on.
-  const seg = shot || _dirPhase;
+  const seg = shot || (dirFastPlayback() && _dirPhase === 'thermal' ? 'glide' : _dirPhase);
   if (seg !== _dirLastSeg) {
     _dirLastSeg = seg;
     if (performance.now() - _dirZoomOverrideAt > DIR_ZOOM_HOLD_MS) {
@@ -9749,7 +10450,7 @@ function directorCamFrame(headingDeg, dtMs) {
     // Wide establishing shot with a gentle drift, easing in.
     zoomTarget = dirZoomFor('intro'); pitchTarget = dirPitchFor('intro');
     map.setBearing(map.getBearing() + 2 * dtMs / 1000);
-  } else if (_dirPhase === 'thermal') {
+  } else if (_dirPhase === 'thermal' && !dirFastPlayback()) {
     // Thermalling: orbit the climb (at least the orbit-camera speed).
     zoomTarget = dirZoomFor('thermal'); pitchTarget = dirPitchFor('thermal');
     map.setBearing(map.getBearing()
@@ -9835,10 +10536,31 @@ async function loadFile(file) {
   saveRecentFlight(file.name, text);   // fire-and-forget IndexedDB write
   loadFlight(newFixes, file.name);
 }
+// Several files at once (multi-select or one drag-and-drop): the first
+// flight file becomes the main flight, the others join as comparison
+// tracks; offline map bundles and task / waypoint files are routed to
+// their own loaders. A single flight file behaves exactly as before.
+async function loadFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const flights = [];
+  for (const f of files) {
+    if (/\.fvmap$/i.test(f.name)) await loadFile(f);
+    else if (/\.(cup|wpt|xctsk)$/i.test(f.name)) await loadTaskFile(f);
+    else flights.push(f);
+  }
+  if (!flights.length) return;
+  await loadFile(flights[0]);
+  if (flights.length > 1 && N > 0) {
+    await addCmpFiles(flights.slice(1));
+    showStatus(`${flights[0].name} + ${flights.length - 1} comparison track`
+      + (flights.length > 2 ? 's' : ''));
+  }
+}
 fileInput.addEventListener('change', e => {
-  const f = e.target.files && e.target.files[0];
-  if (f) loadFile(f);
+  const fl = Array.from(e.target.files || []);
   fileInput.value = '';
+  loadFiles(fl);
 });
 document.getElementById('openBtn').onclick = () => fileInput.click();
 
@@ -9857,8 +10579,7 @@ landing.addEventListener('dragleave', e => {
 landing.addEventListener('drop', e => {
   e.preventDefault();
   landingDrop.classList.remove('hover');
-  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (f) loadFile(f);
+  if (e.dataTransfer && e.dataTransfer.files) loadFiles(e.dataTransfer.files);
 });
 
 function loadFlight(newFixes, filename, opts) {
@@ -9867,6 +10588,8 @@ function loadFlight(newFixes, filename, opts) {
   flightMeta = newFixes.meta || null;
   recomputeFromFixes();
   analyzeFlight();     // takeoff/landing, thermals, wind, summary stats
+  adoptDeclaredTask(); // the file's own task declaration, when plausible
+  computeTaskResult();
   pathDataCache = null;
   spiralCache = null;
 
@@ -9907,6 +10630,7 @@ function loadFlight(newFixes, filename, opts) {
   maybeShowFirstRunTip();
   state.chartTrack = -1;      // chart shows the (possibly new) main flight
   chartXRange = null;         // reset any chart zoom
+  if (window._clearChartSel) window._clearChartSel();
   loopAMs = 0; loopBMs = 0;   // A-B loop belongs to the previous flight
   _dirPhase = 'glide'; _dirCandidate = null;   // Director state belongs to
   _dirLastMs = -1;                             //   the previous flight too
@@ -9998,6 +10722,25 @@ function loadFlight(newFixes, filename, opts) {
 }
 
 const elStatus = document.getElementById('status');
+// Last-resort error surface. An exception in an event handler or a
+// rejected promise used to end up in the console only, leaving the user
+// with a view that had silently stopped responding. Show it once (not per
+// frame) in the status pill; known-harmless noise is ignored.
+let _lastRuntimeErrAt = 0;
+function reportRuntimeError(err) {
+  const msg = String((err && (err.message || err.reason && err.reason.message)) || err || '');
+  if (!msg || /ResizeObserver loop|Script error|AbortError|aborted|Failed to fetch|NetworkError|Load failed|NotAllowedError|failed to invert matrix/i.test(msg)) return;
+  const now = Date.now();
+  if (now - _lastRuntimeErrAt < 15000) return;
+  _lastRuntimeErrAt = now;
+  try {
+    showStatus('Something went wrong: ' + msg.slice(0, 140)
+      + ' \u2014 if the view stops responding, reload the page.', true);
+  } catch (_) {}
+}
+window.addEventListener('error', e => reportRuntimeError(e.error || e.message));
+window.addEventListener('unhandledrejection', e => reportRuntimeError(e.reason));
+
 function showStatus(msg, isErr) {
   elStatus.textContent = msg;
   elStatus.classList.toggle('err', !!isErr);
@@ -11040,6 +11783,346 @@ function wireAirspaceUi() {
 }
 
 // ============================================================================
+//  Task & waypoints
+// ============================================================================
+// A task is an ordered list of turnpoint cylinders. It comes from the
+// flight's own IGC declaration (C records) or from a file the user loads
+// (.xctsk XCTrack task, SeeYou .cup, or a .wpt waypoint list). The viewer
+// draws the cylinders and the course line on the map and works out when
+// the track first entered each cylinder, in order.
+let task = null;          // { name, src: 'igc' | 'file', tps: [{lat, lon, radius, name, kind}] }
+let waypoints = [];       // plain waypoints from a file: [{lat, lon, name, elev}]
+let taskResult = null;    // { reachedIdx: [fix index | -1], count, distKm }
+let taskNote = '';        // why a declared task was not used, for the UI
+const TASK_DEFAULT_RADIUS = 400;   // m -- the usual paragliding cylinder
+
+// IGC C records: [0] declaration header, [1] takeoff, [2..n-2] start /
+// turnpoints / finish, [n-1] landing. Loggers that know the cylinder size
+// (FlySkyHy and friends) append it as digits before the name.
+function parseIgcTask(cLines) {
+  if (cLines.length < 4) return null;
+  const tps = [];
+  for (const line of cLines.slice(2, -1)) {
+    const m = /^C(\d{7})([NS])(\d{8})([EW])(.*)$/.exec(line);
+    if (!m) continue;
+    const lat = dmToDeg(m[1], m[2], 2), lon = dmToDeg(m[3], m[4], 3);
+    if (!isFinite(lat) || !isFinite(lon) || (lat === 0 && lon === 0)) continue;
+    let rest = m[5], radius = TASK_DEFAULT_RADIUS;
+    const dg = /^(\d{20,})(.*)$/.exec(rest);
+    if (dg) {
+      const r = parseInt(dg[1].slice(6, 14), 10);
+      if (r >= 50 && r <= 200000) radius = r;
+      rest = dg[2];
+    }
+    let name = rest.trim(), kind = 'tp';
+    const km = /^(START|TURN|FINISH)\s*(AREA)?\s*(.*)$/i.exec(name);
+    if (km) {
+      kind = km[1].toUpperCase() === 'START' ? 'start'
+           : km[1].toUpperCase() === 'FINISH' ? 'goal' : 'tp';
+      name = km[3].trim();
+    }
+    tps.push({ lat, lon, radius, name, kind });
+  }
+  if (tps.length < 2) return null;
+  if (tps[0].kind === 'tp') tps[0].kind = 'start';
+  if (tps[tps.length - 1].kind === 'tp') tps[tps.length - 1].kind = 'goal';
+  return { name: 'Declared task', src: 'igc', tps };
+}
+
+function csvSplit(line) {
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+    else if (ch === ',' && !q) { out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out.map(v => v.trim());
+}
+// SeeYou .cup: waypoint rows, then optionally "-----Related Tasks-----".
+function parseCup(text) {
+  const wps = []; let tk = null;
+  const lines = text.split(/\r?\n/);
+  const ll = (v, degDigits) => {
+    const m = /^(\d+)(\d\d\.\d+)([NSEW])$/i.exec(v.replace(/\s/g, ''));
+    if (!m || m[1].length !== degDigits) return NaN;
+    const d = parseInt(m[1], 10) + parseFloat(m[2]) / 60;
+    return /[SW]/i.test(m[3]) ? -d : d;
+  };
+  const dist = v => {
+    const m = /^(-?[\d.]+)\s*(m|km|ft|nm|ml)?$/i.exec(v || '');
+    if (!m) return NaN;
+    const k = { m: 1, km: 1000, ft: 0.3048, nm: 1852, ml: 1609.344 }[(m[2] || 'm').toLowerCase()];
+    return parseFloat(m[1]) * k;
+  };
+  let i = 0;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^-+\s*Related Tasks/i.test(line)) { i++; break; }
+    if (!line.trim()) continue;
+    const c = csvSplit(line);
+    if (c.length < 5 || /^name$/i.test(c[0])) continue;
+    const lat = ll(c[3], 2), lon = ll(c[4], 3);
+    if (!isFinite(lat) || !isFinite(lon)) continue;
+    wps.push({ name: c[0] || c[1], code: c[1], lat, lon, elev: dist(c[5]) });
+  }
+  // First task only: a row of waypoint names, then ObsZone= rows with R1.
+  for (; i < lines.length && !tk; i++) {
+    const line = lines[i];
+    if (!line.trim() || /^(Options|ObsZone|STARTS?=)/i.test(line)) continue;
+    const c = csvSplit(line);
+    const tps = [];
+    for (const nm of c.slice(1)) {
+      if (!nm) continue;
+      const w = wps.find(x => x.name === nm || x.code === nm);
+      if (w) tps.push({ lat: w.lat, lon: w.lon, radius: TASK_DEFAULT_RADIUS, name: w.name, kind: 'tp' });
+    }
+    if (tps.length < 2) continue;
+    for (let j = i + 1; j < lines.length; j++) {
+      const z = /^ObsZone=(\d+)/i.exec(lines[j]);
+      if (!z) { if (/^(Options|STARTS?=)/i.test(lines[j]) || !lines[j].trim()) continue; break; }
+      const r = /R1=([^,]+)/i.exec(lines[j]);
+      const k = parseInt(z[1], 10);
+      const rv = r ? dist(r[1].trim()) : NaN;
+      if (tps[k] && rv >= 50) tps[k].radius = rv;
+    }
+    tps[0].kind = 'start'; tps[tps.length - 1].kind = 'goal';
+    tk = { name: c[0] || 'Task', src: 'file', tps };
+  }
+  return { waypoints: wps, task: tk };
+}
+// XCTrack .xctsk (JSON, version 1).
+function parseXctsk(text) {
+  let j;
+  try { j = JSON.parse(text); } catch (_) { return null; }
+  if (!j || !Array.isArray(j.turnpoints)) return null;
+  const tps = [];
+  for (const t of j.turnpoints) {
+    const w = t && t.waypoint;
+    if (!w || !isFinite(w.lat) || !isFinite(w.lon)) continue;
+    const ty = String(t.type || '').toUpperCase();
+    tps.push({ lat: +w.lat, lon: +w.lon,
+      radius: t.radius >= 1 ? +t.radius : TASK_DEFAULT_RADIUS,
+      name: String(w.name || w.description || ''),
+      kind: ty === 'SSS' ? 'start' : ty === 'TAKEOFF' ? 'takeoff' : 'tp' });
+  }
+  if (tps.length < 2) return null;
+  tps[tps.length - 1].kind = 'goal';
+  return { name: 'XCTrack task', src: 'file', tps };
+}
+// .wpt waypoint lists: OziExplorer, CompeGPS and FormatGEO flavours.
+function parseWpt(text) {
+  const wps = [];
+  const lines = text.split(/\r?\n/);
+  if (/^OziExplorer Waypoint File/i.test(lines[0] || '')) {
+    for (const line of lines.slice(4)) {
+      const c = line.split(',').map(v => v.trim());
+      const lat = parseFloat(c[2]), lon = parseFloat(c[3]);
+      if (c.length < 4 || !isFinite(lat) || !isFinite(lon)) continue;
+      const ft = parseFloat(c[14]);
+      wps.push({ name: c[1], lat, lon, elev: ft > -777 ? ft * 0.3048 : NaN });
+    }
+    return wps;
+  }
+  for (const line of lines) {
+    // CompeGPS:  W  NAME A 46.123456ºN 12.123456ºE 27-MAR-62 00:00:00 1234.0 description
+    let m = /^W\s+(\S+)\s+A\s+([\d.]+)\D{0,2}([NS])\s+([\d.]+)\D{0,2}([EW])\s+\S+\s+\S+\s+(-?[\d.]+)/i.exec(line);
+    if (m) {
+      wps.push({ name: m[1], lat: (m[3].toUpperCase() === 'S' ? -1 : 1) * parseFloat(m[2]),
+                 lon: (m[5].toUpperCase() === 'W' ? -1 : 1) * parseFloat(m[4]), elev: parseFloat(m[6]) });
+      continue;
+    }
+    // FormatGEO:  NAME   N 46 12 34.56   E 012 12 34.56   1234  description
+    m = /^(\S+)\s+([NS])\s+(\d+)\s+(\d+)\s+([\d.]+)\s+([EW])\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(-?\d+)/i.exec(line);
+    if (m) {
+      const la = +m[3] + +m[4] / 60 + +m[5] / 3600, lo = +m[7] + +m[8] / 60 + +m[9] / 3600;
+      wps.push({ name: m[1], lat: m[2].toUpperCase() === 'S' ? -la : la,
+                 lon: m[6].toUpperCase() === 'W' ? -lo : lo, elev: parseFloat(m[10]) });
+    }
+  }
+  return wps;
+}
+
+// A declaration is only believed when it is anywhere near the flight:
+// loggers keep the last task forever, so a file often carries a task from
+// another site, hundreds of kilometres away.
+function taskNearTrack(tk) {
+  if (!tk || N < 2) return false;
+  const step = Math.max(1, Math.floor(N / 300));
+  for (const tp of tk.tps) {
+    for (let i = 0; i < N; i += step) {
+      if (hav(tp.lat, tp.lon, fixes[i].lat, fixes[i].lon) < 30000 + tp.radius) return true;
+    }
+  }
+  return false;
+}
+function adoptDeclaredTask() {
+  taskNote = '';
+  if (task && task.src === 'file') return;      // the user's file wins
+  task = null;
+  const decl = flightMeta && flightMeta.task;
+  if (!decl) return;
+  if (taskNearTrack(decl)) task = decl;
+  else taskNote = 'The task declared in this file is far from the flight (a leftover from another site) and was ignored.';
+}
+function taskDistKm(tk) {
+  let d = 0;
+  for (let k = 1; k < tk.tps.length; k++) {
+    d += hav(tk.tps[k - 1].lat, tk.tps[k - 1].lon, tk.tps[k].lat, tk.tps[k].lon);
+  }
+  return d / 1000;
+}
+function computeTaskResult() {
+  taskResult = null;
+  if (!task || N < 2) return;
+  const reachedIdx = task.tps.map(() => -1);
+  let k = 0;
+  for (let i = takeoffIdx; i < N && k < task.tps.length; i++) {
+    const f = fixes[i];
+    while (k < task.tps.length
+        && hav(f.lat, f.lon, task.tps[k].lat, task.tps[k].lon) <= task.tps[k].radius) {
+      reachedIdx[k] = i; k++;
+    }
+  }
+  taskResult = { reachedIdx, count: k, distKm: taskDistKm(task) };
+}
+function circleRing(lat, lon, radiusM, n) {
+  const ring = [];
+  const dLat = radiusM / 111320, dLon = radiusM / (111320 * Math.cos(lat * Math.PI / 180));
+  for (let k = 0; k <= n; k++) {
+    const a = (k % n) / n * 2 * Math.PI;
+    ring.push([lon + dLon * Math.sin(a), lat + dLat * Math.cos(a)]);
+  }
+  return ring;
+}
+function taskGeoJSON() {
+  const feats = [];
+  if (state.taskShow) {
+    if (task) {
+      task.tps.forEach((tp, k) => {
+        const reached = !!(taskResult && taskResult.reachedIdx[k] >= 0);
+        feats.push({ type: 'Feature', properties: { kind: tp.kind, reached },
+          geometry: { type: 'Polygon', coordinates: [circleRing(tp.lat, tp.lon, tp.radius, 72)] } });
+        feats.push({ type: 'Feature',
+          properties: { kind: tp.kind, label: `${k + 1}${tp.name ? ' ' + tp.name : ''}` },
+          geometry: { type: 'Point', coordinates: [tp.lon, tp.lat] } });
+      });
+      feats.push({ type: 'Feature', properties: { kind: 'course' },
+        geometry: { type: 'LineString', coordinates: task.tps.map(tp => [tp.lon, tp.lat]) } });
+    }
+    for (const w of waypoints) {
+      feats.push({ type: 'Feature', properties: { kind: 'wp', label: w.name || '' },
+        geometry: { type: 'Point', coordinates: [w.lon, w.lat] } });
+    }
+  }
+  return { type: 'FeatureCollection', features: feats };
+}
+const TASK_COLOR = ['match', ['get', 'kind'],
+  'start', '#4ade80', 'goal', '#f87171', 'takeoff', '#93c5fd', 'wp', '#e5e7eb', '#fde047'];
+function applyTaskLayer() {
+  if (!map || !mapReady) return;
+  try {
+    const src = map.getSource('task');
+    if (!src) {
+      map.addSource('task', { type: 'geojson', data: taskGeoJSON() });
+      map.addLayer({ id: 'task-fill', type: 'fill', source: 'task',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': TASK_COLOR,
+                 'fill-opacity': ['case', ['get', 'reached'], 0.22, 0.09] } });
+      map.addLayer({ id: 'task-ring', type: 'line', source: 'task',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'line-color': TASK_COLOR, 'line-width': 2 } });
+      map.addLayer({ id: 'task-course', type: 'line', source: 'task',
+        filter: ['==', ['geometry-type'], 'LineString'],
+        paint: { 'line-color': '#ffffff', 'line-width': 1.5, 'line-opacity': 0.8,
+                 'line-dasharray': [3, 2] } });
+      map.addLayer({ id: 'task-pt', type: 'circle', source: 'task',
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: { 'circle-radius': ['case', ['==', ['get', 'kind'], 'wp'], 3.5, 4.5],
+                 'circle-color': TASK_COLOR,
+                 'circle-stroke-color': '#111', 'circle-stroke-width': 1 } });
+      map.addLayer({ id: 'task-label', type: 'symbol', source: 'task',
+        filter: ['==', ['geometry-type'], 'Point'],
+        layout: { 'text-field': ['get', 'label'], 'text-font': ['Noto Sans Bold'],
+                  'text-size': ['case', ['==', ['get', 'kind'], 'wp'], 10, 12],
+                  'text-offset': [0, 0.9], 'text-anchor': 'top', 'text-optional': true },
+        paint: { 'text-color': '#fff',
+                 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.3 } });
+    } else {
+      src.setData(taskGeoJSON());
+    }
+  } catch (e) { console.warn('task layer failed:', e); }
+  renderDirty = true;
+}
+function taskStatusText() {
+  const bits = [];
+  if (task) {
+    bits.push(`${task.src === 'igc' ? 'Declared in the flight file' : task.name}: `
+      + `${task.tps.length} turnpoints, ${U.distConv(taskDistKm(task)).toFixed(1)} ${U.distLabel()}`);
+  }
+  if (waypoints.length) bits.push(`${waypoints.length} waypoints`);
+  if (!bits.length) bits.push(taskNote || 'No task loaded');
+  return bits.join(' \u00b7 ');
+}
+function refreshTask() {
+  computeTaskResult();
+  applyTaskLayer();
+  if (N > 1) { renderStatsPanel(); buildProgressTicks(); }
+  const st = document.getElementById('taskStatus');
+  if (st) st.textContent = taskStatusText();
+}
+async function loadTaskFile(file) {
+  let text;
+  try { text = await file.text(); }
+  catch (e) { showStatus('Cannot read file: ' + e.message, true); return; }
+  const lower = file.name.toLowerCase();
+  let tk = null, wps = [];
+  if (lower.endsWith('.xctsk') || /^\s*\{/.test(text)) tk = parseXctsk(text);
+  else if (lower.endsWith('.cup')) { const r = parseCup(text); tk = r.task; wps = r.waypoints; }
+  else wps = parseWpt(text);
+  if (!tk && !wps.length) {
+    showStatus('No task or waypoints found in ' + file.name, true);
+    return;
+  }
+  if (tk) { tk.name = file.name; task = tk; taskNote = ''; }
+  if (wps.length) waypoints = wps;
+  if (!state.taskShow) {
+    state.taskShow = true;
+    const cb = document.getElementById('taskShowCb');
+    if (cb) cb.checked = true;
+  }
+  refreshTask();
+  showStatus(tk ? `Task: ${tk.tps.length} turnpoints from ${file.name}`
+                : `${wps.length} waypoints from ${file.name}`);
+}
+function wireTaskUi() {
+  const input = document.getElementById('taskFileInput');
+  const loadBtn = document.getElementById('taskLoadBtn');
+  const clearBtn = document.getElementById('taskClearBtn');
+  const showCb = document.getElementById('taskShowCb');
+  if (!input || !loadBtn) return;
+  showCb.checked = state.taskShow;
+  loadBtn.onclick = () => input.click();
+  input.addEventListener('change', async e => {
+    const fl = Array.from(e.target.files || []);
+    input.value = '';
+    for (const f of fl) await loadTaskFile(f);
+  });
+  clearBtn.onclick = () => {
+    task = null; waypoints = [];
+    adoptDeclaredTask();          // fall back to the file's own declaration
+    refreshTask();
+  };
+  showCb.addEventListener('change', e => {
+    state.taskShow = e.target.checked;
+    applyTaskLayer();
+  });
+  const st = document.getElementById('taskStatus');
+  if (st) st.textContent = taskStatusText();
+}
+
+// ============================================================================
 //  Export & share: screenshot, video recording, position link
 // ============================================================================
 function downloadBlob(blob, filename) {
@@ -11062,6 +12145,86 @@ function exportFileName(ext) {
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
     + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   return `${exportBaseName()}_${stamp}${ext}`;
+}
+// ---- Track export (whole flight, or the A-B section) ---------------------
+function exportRange() {
+  if (N < 2) return null;
+  if (loopAMs && loopBMs && loopBMs > loopAMs) {
+    const i0 = findIdx(loopAMs), i1 = Math.min(N - 1, findIdx(loopBMs) + 1);
+    if (i1 > i0) return { i0, i1, section: true };
+  }
+  return { i0: takeoffIdx, i1: landingIdx > takeoffIdx ? landingIdx : N - 1, section: false };
+}
+function xmlEsc(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                  .replace(/"/g, '&quot;');
+}
+function buildGpx(i0, i1) {
+  const name = xmlEsc(exportBaseName());
+  const out = ['<?xml version="1.0" encoding="UTF-8"?>',
+    '<gpx version="1.1" creator="Flight Viewer" xmlns="http://www.topografix.com/GPX/1/1">',
+    `<trk><name>${name}</name><trkseg>`];
+  for (let i = i0; i <= i1; i++) {
+    const f = fixes[i];
+    out.push(`<trkpt lat="${f.lat.toFixed(6)}" lon="${f.lon.toFixed(6)}">`
+      + `<ele>${altOf(f).toFixed(1)}</ele><time>${new Date(tMs[i]).toISOString()}</time></trkpt>`);
+  }
+  out.push('</trkseg></trk></gpx>');
+  return out.join('\n');
+}
+function buildKml(i0, i1) {
+  const name = xmlEsc(exportBaseName());
+  const out = ['<?xml version="1.0" encoding="UTF-8"?>',
+    '<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">',
+    `<Document><name>${name}</name><Placemark><name>${name}</name>`,
+    '<Style><LineStyle><color>ff00a5ff</color><width>3</width></LineStyle></Style>',
+    '<gx:Track><altitudeMode>absolute</altitudeMode>'];
+  for (let i = i0; i <= i1; i++) out.push(`<when>${new Date(tMs[i]).toISOString()}</when>`);
+  for (let i = i0; i <= i1; i++) {
+    const f = fixes[i];
+    out.push(`<gx:coord>${f.lon.toFixed(6)} ${f.lat.toFixed(6)} ${altOf(f).toFixed(1)}</gx:coord>`);
+  }
+  out.push('</gx:Track></Placemark></Document></kml>');
+  return out.join('\n');
+}
+function buildIgc(i0, i1) {
+  const p = (n, w) => String(Math.abs(Math.round(n))).padStart(w, '0');
+  const d0 = new Date(tMs[i0]);
+  const out = ['AXFVFLIGHTVIEWER',
+    `HFDTE${p(d0.getUTCDate(), 2)}${p(d0.getUTCMonth() + 1, 2)}${p(d0.getUTCFullYear() % 100, 2)}`];
+  const m = flightMeta || {};
+  if (m.pilot)  out.push('HFPLTPILOTINCHARGE:' + m.pilot);
+  if (m.glider) out.push('HFGTYGLIDERTYPE:' + m.glider);
+  if (m.gliderId) out.push('HFGIDGLIDERID:' + m.gliderId);
+  if (m.site)   out.push('HFSITSITE:' + m.site);
+  out.push('HFDTM100GPSDATUM:WGS-1984');
+  const ll = (deg, wDeg, pos, neg) => {
+    const a = Math.abs(deg);
+    let dd = Math.floor(a), mm = Math.round((a - dd) * 60000);
+    if (mm >= 60000) { dd++; mm = 0; }
+    return String(dd).padStart(wDeg, '0') + String(mm).padStart(5, '0') + (deg >= 0 ? pos : neg);
+  };
+  const alt = v => (v < 0 ? '-' + p(v, 4) : p(v, 5));
+  for (let i = i0; i <= i1; i++) {
+    const f = fixes[i], d = new Date(tMs[i]);
+    out.push('B' + p(d.getUTCHours(), 2) + p(d.getUTCMinutes(), 2) + p(d.getUTCSeconds(), 2)
+      + ll(f.lat, 2, 'N', 'S') + ll(f.lon, 3, 'E', 'W') + 'A'
+      + alt(f.alt_baro) + alt(f.alt_gps));
+  }
+  return out.join('\r\n') + '\r\n';
+}
+function exportTrack(kind) {
+  const r = exportRange();
+  if (!r) { showStatus('No flight loaded', true); return; }
+  const text = kind === 'gpx' ? buildGpx(r.i0, r.i1)
+             : kind === 'kml' ? buildKml(r.i0, r.i1) : buildIgc(r.i0, r.i1);
+  const mime = kind === 'gpx' ? 'application/gpx+xml'
+             : kind === 'kml' ? 'application/vnd.google-earth.kml+xml' : 'text/plain';
+  const hms = ms => fmtLocalHMS(ms).replace(/:/g, '');
+  const name = exportBaseName()
+    + (r.section ? `_${hms(tMs[r.i0])}-${hms(tMs[r.i1])}` : '_flight') + '.' + kind;
+  downloadBlob(new Blob([text], { type: mime }), name);
+  showStatus(`Exported ${r.i1 - r.i0 + 1} fixes (${r.section ? 'A\u2013B section' : 'takeoff to landing'}) \u2192 ${name}`);
 }
 function doScreenshot() {
   if (!map) return;
@@ -11237,6 +12400,14 @@ function drawCompositeFrame() {
   const mapRect = mapCanvas.getBoundingClientRect();
   drawHudOverlay(ctx, dpr, mapRect);
   drawChartOverlay(ctx, dpr, mapRect);
+  const lg = document.getElementById('varioLegend');
+  if (lg && lg.width > 0 && legendVisible()) {
+    const rl = lg.getBoundingClientRect();
+    if (rl.width) {
+      ctx.drawImage(lg, (rl.left - mapRect.left) * dpr, (rl.top - mapRect.top) * dpr,
+        rl.width * dpr, rl.height * dpr);
+    }
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
@@ -11409,6 +12580,11 @@ function wireExportUi() {
   } else {
     if (recBtn) { recCtl.buttons.push(recBtn); recBtn.onclick = toggleRecording; }
     if (recBar) { recCtl.buttons.push(recBar); recBar.onclick = toggleRecording; }
+  }
+
+  for (const k of ['gpx', 'igc', 'kml']) {
+    const b = document.getElementById('exp' + k[0].toUpperCase() + k.slice(1));
+    if (b) b.onclick = () => exportTrack(k);
   }
 
   const shareBtn = document.getElementById('shareBtn');

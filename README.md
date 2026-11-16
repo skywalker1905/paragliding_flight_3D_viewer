@@ -109,6 +109,14 @@ cached them or have been opened online at least once.
   and teal → sky blue → **blue = sinking** → violet. Adjustable max climb
   / max sink / normal glide (defaults 2.5 / 3 / 1 m/s; set normal glide to
   0 for a zero-centred scale), or **single colour** (default pure green).
+- The **vario follows the selected altitude source** (GPS or baro), so the
+  colours, the HUD number, the chart and the thermal stats all describe
+  the altitude trace that is actually drawn. Logs with no usable baro
+  altitude (a constant 0 from loggers without a pressure sensor) fall back
+  to GPS automatically, and vice versa.
+- **Colour legend**: a small key on the left edge of the map shows which
+  climb / sink rate each colour stands for (settings → Trail & pilot;
+  included in composited recordings).
 - Adjustable pixel width (`Track width`) and optional metres-wide 3-D
   ribbon (`3-D thickness`) so the track reads as a solid body from any
   angle.
@@ -212,6 +220,11 @@ cached them or have been opened online at least once.
   falls back seamlessly. Shots show as translucent bands on the timeline
   and belong to the loaded flight.
 
+- **Fast playback**: above 8× the Director backs off with the speed (up to
+  about three zoom levels at 120×) so the terrain moves past at a
+  watchable rate, and from 20× it keeps the calm glide framing instead of
+  orbiting each thermal for the second or two it lasts.
+
 ### Chart
 - Three metrics, switchable in the chart header: **Alt** (pilot altitude
   in blue + earth-brown ground altitude with soft fill — the visible gap
@@ -240,12 +253,29 @@ cached them or have been opened online at least once.
   the chart shows.
 - Draggable header, resizable corner (grip shown bottom-right).
 
+- **Select a range**: Shift + drag on the chart marks a stretch of the
+  flight and shows its duration, altitude change, mean climb, straight
+  and flown distance, glide ratio and speed. **Loop** turns it into the
+  A-B loop (which is also what track export uses), **Zoom** fits the
+  chart to it.
+
 ### Flight statistics & thermals
 - **Stats panel** (`I` or the bar-chart button): takeoff / landing time
   and altitude, airtime, max altitude (with time), max climb / sink,
   max speed, total ascent, track length, straight distance, max
   distance from takeoff — plus IGC header info (pilot, glider, site)
   when present.
+- **Phase summary**: share of the airtime spent circling with the mean
+  climb, mean glide ratio and speed on the glides, and the lowest
+  in-flight height above ground with its time.
+- **Glides between thermals**: every glide is listed with duration,
+  straight distance, altitude change, glide ratio and speed — click one
+  to jump to it.
+- **Low passes**: in-flight stretches closer to the terrain than the
+  *Low AGL alert* height (default 50 m, settings → Trail & pilot; the
+  first minute after takeoff and the last 90 s before landing don't
+  count) are marked in amber under the timeline, listed in the panel,
+  and turn the HUD's AGL value amber while they play.
 - **XC triangle on the map**: the best triangle is drawn in white with
   markers at the three turnpoints and a red closing-gap line
   (toggle: settings → Track & display → XC triangle).
@@ -266,7 +296,8 @@ cached them or have been opened online at least once.
 ### HUD
 - Live time (launch-local, DST-aware, shown with the zone abbreviation
   such as PDT / PST), altitude, **AGL** (from the DEM directly below the
-  pilot), ground speed, vario, **glide ratio (L/D)**, **wind estimate**,
+  pilot), ground speed, vario (smoothed over a few seconds — the same
+  value that colours the track), **glide ratio (L/D)**, **wind estimate**,
   cumulative distance.
 - Draggable anywhere on screen.
 - **Compact mode** (▴ / ▾ in the HUD header): just altitude, AGL, ground
@@ -297,7 +328,8 @@ cached them or have been opened online at least once.
 
 ### Comparison tracks
 - Load up to six extra IGC / GPX / KML files (settings → **Comparison
-  tracks**) and replay them alongside the main flight. Every track gets
+  tracks**, or simply open / drop **several files at once**: the first
+  becomes the main flight, the rest comparison tracks) and replay them alongside the main flight. Every track gets
   the same vario colouring and progressive reveal as the main one;
   pilots are told apart by their marker colours and name labels.
 - **Align by Takeoff** starts every track at its own detected takeoff,
@@ -346,6 +378,27 @@ cached them or have been opened online at least once.
   **snapshotted into `.fvmap` packs** so a shared pack carries the
   annotations too.
 
+### Task & waypoints
+- A task **declared in the IGC file** (C records) is picked up
+  automatically — unless it lies far from the flight, which is what a
+  logger's leftover declaration from another site looks like.
+- Load an **XCTrack task** (`.xctsk`), a **SeeYou** file (`.cup`:
+  waypoints plus its first task) or a **waypoint list** (`.wpt`:
+  OziExplorer, CompeGPS or GEO format) via settings → **Task &
+  waypoints**, the Open button or drag-and-drop.
+- Turnpoint cylinders (start green, goal red) and the course line are
+  drawn on the map; the stats panel lists **when each cylinder was first
+  reached**, in order (click to jump), and the timeline gets a yellow tick
+  per turnpoint.
+
+### Measure tool
+- The ruler button in the map controls measures between two clicked
+  points: distance, bearing and the terrain height at both ends. With a
+  flight loaded it also says how far the pilot currently is from the
+  second point and what **glide ratio would be needed** to get there.
+- Like site drawing it works top-down with drag-to-pan for exact
+  picking; `Esc` or **Done** restores the previous view.
+
 ### Airspace overlay
 - Load an **OpenAir** (`.txt`) airspace file (settings → **Airspace**).
   Zones are draped over the 3-D terrain, colour-coded by class
@@ -375,6 +428,10 @@ cached them or have been opened online at least once.
   into the browser's download folder. On phones the system share sheet
   opens instead — tap *Save Video* / *Save Image* to put the file in
   the photo album (browsers cannot write there directly).
+- **Export track**: save the flight as **GPX**, **IGC** or **KML**
+  (settings → Export & share). With an A-B loop set only that section is
+  written, otherwise takeoff to landing — handy for sharing one climb or
+  trimming ground time.
 - **Copy link**: when served over HTTP(S), copies a URL with the current
   playback position (`#t=seconds`) embedded — opening it jumps straight
   to that moment.
@@ -417,10 +474,10 @@ Collapsible sections (open/closed state remembered):
   detect threshold, manual range.
 - **Trail & pilot** — track & curtain fade (switch + hold + fade each),
   track curtain, colour mode + max climb / sink / normal glide, pilot shape / size,
-  altitude line, XC triangle.
+  altitude line, XC triangle, low AGL alert, colour legend.
 
 Basics, Camera and Playback start open; the rest start collapsed.
-- **Comparison tracks**, **Airspace** (+ openAIP key), **Thermal map
+- **Comparison tracks**, **Task & waypoints**, **Airspace** (+ openAIP key), **Thermal map
   (kk7)**, **Launch & landing sites**, **Offline map**, **Export &
   share** — see above.
 
@@ -497,6 +554,7 @@ controls.
 | `.gpx` | Standard `<trkpt>` track-points, with elevation. |
 | `.kml` | Google Earth-style `<gx:Track>` / `<LineString>` (synthetic sample rate adjustable for time-less LineStrings). |
 | OpenAir `.txt` | Airspace files, loaded separately via settings → Airspace. |
+| `.xctsk` / `.cup` / `.wpt` | Task and waypoint files (XCTrack task; SeeYou waypoints + first task; OziExplorer / CompeGPS / GEO waypoint lists). Load via settings → Task & waypoints, Open, or drag-and-drop. |
 | `.geojson` | Launch / LZ sites, imported / exported via settings → Launch & landing sites (features carry a `launch` / `lz` `type` property). |
 | `.fvmap` | Offline map bundle created by this viewer (settings → Offline map); load via Open / drag-and-drop. Carries basemap + DEM tiles, and optionally kk7 layers and sites. |
 
