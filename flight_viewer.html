@@ -340,11 +340,6 @@
     cursor: ew-resize;
   }
   #speedSlider { width: 100px; height: 4px; cursor: ew-resize; }
-  #speedCtl.autoPulse #speedV { animation: fvSpeedPulse 1.6s ease-out 1; }
-  @keyframes fvSpeedPulse {
-    0%, 35% { color: var(--accent-2); transform: scale(1.18); }
-    100% { transform: scale(1); }
-  }
   #speedV {
     font-size: 12px; color: var(--fg);
     min-width: 48px; text-align: right;
@@ -432,6 +427,20 @@
   }
   #chartSel.hidden { display: none; }
   #chartSelBtn.active { background: var(--accent); color: #fff; }
+  /* Setting explanations. They live in title tooltips, which a touch
+     screen can never show: tapping (or clicking) a label that has one
+     unfolds the text under its row. Touch devices get an (i) marker so
+     the labels read as tappable. */
+  .secBody .row .lbl[title] { cursor: help; }
+  .rowHelp {
+    font-size: 11px; line-height: 1.45; color: var(--fg-dim);
+    padding: 2px 2px 9px; margin-top: -2px;
+  }
+  @media (hover: none) {
+    .secBody .row .lbl[title]::after {
+      content: '\24D8'; margin-left: 5px; color: var(--fg-mute); font-size: 11px;
+    }
+  }
   #chart.selMode { cursor: col-resize; }
   #chartSelText { flex: 1; min-width: 0; }
   #chartSel .btn-small { padding: 2px 8px; font-size: 10px; }
@@ -594,6 +603,15 @@
     color: var(--fg-dim); font-size: 11px; font-weight: 600;
     letter-spacing: 0.05em; text-transform: uppercase;
   }
+  /* Each list under a sub-heading folds away on a click of the heading. */
+  #statsPanel .subhead { cursor: pointer; user-select: none; position: relative;
+                         padding-right: 16px; }
+  #statsPanel .subhead::after {
+    content: '\25BE'; position: absolute; right: 0; top: 6px;
+    color: var(--fg-mute); transition: transform 120ms;
+  }
+  #statsPanel .subhead.folded::after { transform: rotate(-90deg); }
+  #statsPanel .subhead.folded + div { display: none; }
   #statsPanel .thermal {
     display: grid; gap: 8px; align-items: baseline;
     grid-template-columns: auto 1fr auto;
@@ -730,17 +748,20 @@
   #siteDrawBar #siteDrawBarHint { color: var(--warn); white-space: nowrap; }
   /* Measure tool read-out: same floating bar, but the text may wrap. */
   #measureBar {
-    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    position: absolute; top: 12px; left: 84px;
     z-index: 30; display: none; align-items: center; gap: 8px;
-    padding: 7px 10px; border-radius: 10px; max-width: calc(100% - 150px);
+    padding: 7px 10px; border-radius: 10px; max-width: calc(100% - 420px);
     background: var(--bg-pane-strong); border: 1px solid var(--bd);
     box-shadow: var(--shadow);
     backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums;
   }
   body.measuring #measureBar { display: flex; }
-  /* The read-out needs the top of the map; the HUD steps aside meanwhile. */
-  body.measuring #hud { opacity: 0; pointer-events: none; }
+  /* Narrow screens have no room for both: the HUD steps aside meanwhile. */
+  @media (max-width: 900px) {
+    #measureBar { max-width: calc(100% - 150px); }
+    body.measuring #hud { opacity: 0; pointer-events: none; }
+  }
   #taskList .thermal, #lowList .thermal {
     grid-template-columns: minmax(0, 1fr) auto; gap: 8px;
   }
@@ -1348,10 +1369,6 @@
           <div class="ctl"><input type="checkbox" id="autoTrim" checked></div>
         </div>
         <div class="row">
-          <span class="lbl" title="Off (default): every flight plays at the speed you last set. On: pick the starting speed from the flight's length each time a flight is loaded, so a short sled ride replays in about half a minute and a long cross-country in a few minutes.">Auto speed</span>
-          <div class="ctl"><input type="checkbox" id="autoSpeedCb"></div>
-        </div>
-        <div class="row">
           <span class="lbl" title="Repeat a section of the flight: scrub to the start and press Set A (or the [ key), then Set B at the end (]). Playback loops inside the marked band on the timeline. \\ clears.">A–B loop</span>
           <div class="ctl" style="gap:6px">
             <button id="loopSetA" class="btn-small">Set A</button>
@@ -1377,6 +1394,13 @@
             <input type="number" id="altOffsetN" value="0" step="1" data-default="0" style="width:52px">
             <button id="autoAlignBtn" class="btn-small" title="Auto-align track altitude with DEM ground elevation" style="padding:3px 8px;font-size:11px">Auto</button>
             <span style="color:var(--fg-mute)">m</span>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="In-flight stretches closer to the terrain than this are marked in amber under the timeline, listed in the flight stats, and turn the HUD's AGL value amber. The first minute after takeoff and the last 90 s before landing don't count. 0 = off.">Low AGL alert</span>
+          <div class="ctl">
+            <input type="range" id="lowAgl" min="0" max="150" step="10" value="50" data-default="50" style="width:120px">
+            <span id="lowAglV" style="min-width:44px;color:var(--fg-dim)">50 m</span>
           </div>
         </div>
         <div class="row">
@@ -1526,6 +1550,10 @@
           </div>
         </div>
         <div class="row">
+          <span class="lbl" title="Small colour key on the right edge of the map showing which climb / sink rate each track colour stands for. Included in recordings.">Colour legend</span>
+          <div class="ctl"><input type="checkbox" id="legendCb" checked></div>
+        </div>
+        <div class="row">
           <span class="lbl" title="Cylinder = white inner body + magenta outer band + red forward wedge (opaque matte, constant on-screen size). Arrow = flat circle + triangle, always on top. Wing = elongated oval canopy.">Pilot shape</span>
           <div class="ctl">
             <div class="toggle" id="pilotShape">
@@ -1549,17 +1577,6 @@
         <div class="row">
           <span class="lbl" title="Draws the best XC triangle on the map: dashed edges between the three turnpoints, markers at each corner, and a red closing-gap line. Computed with XContest rules (see Flight stats).">XC triangle</span>
           <div class="ctl"><input type="checkbox" id="xcTriCb" checked></div>
-        </div>
-        <div class="row">
-          <span class="lbl" title="In-flight stretches closer to the terrain than this are marked in amber under the timeline, listed in the flight stats, and turn the HUD's AGL value amber. The first minute after takeoff and the last 90 s before landing don't count. 0 = off.">Low AGL alert</span>
-          <div class="ctl">
-            <input type="range" id="lowAgl" min="0" max="150" step="10" value="50" data-default="50" style="width:120px">
-            <span id="lowAglV" style="min-width:44px;color:var(--fg-dim)">50 m</span>
-          </div>
-        </div>
-        <div class="row">
-          <span class="lbl" title="Small colour key on the right edge of the map showing which climb / sink rate each track colour stands for. Included in recordings.">Colour legend</span>
-          <div class="ctl"><input type="checkbox" id="legendCb" checked></div>
         </div>
         <div class="row">
           <span class="lbl" title="Translucent wall from the track down to the terrain (SeeYou-style curtain). Strong depth cue for the 3D shape of the flight; costs some GPU on long tracks.">Track curtain</span>
@@ -1778,7 +1795,7 @@
         <div class="sec closed" data-sec="export"><span class="chev">&#x25BE;</span><span>Export &amp; share</span></div>
         <div class="secBody closed" data-secbody="export">
         <div class="row">
-          <span class="lbl" title="Save the current 3D view as a JPEG (map + track only, UI panels excluded).">Screenshot</span>
+          <span class="lbl" title="Save the current 3D view as a JPEG, with the Live HUD, chart and colour legend when they are open. Buttons and settings are left out.">Screenshot</span>
           <div class="ctl"><button id="shotBtn" class="btn-small">Save image</button></div>
         </div>
         <div class="row" id="rowRecord">
@@ -1879,7 +1896,7 @@
         <div id="windList"></div>
         <div class="subhead" id="thermalHead" style="display:none">Thermals (click to jump)</div>
         <div id="thermalList"></div>
-        <div class="subhead" id="glideHead" style="display:none">Glides between thermals (click to jump)</div>
+        <div class="subhead" id="glideHead" style="display:none" title="Legs between thermals. Distance is straight-line for a glide and distance flown for a soaring leg (ridge passes, searching); speed is always distance flown over time.">Legs between thermals (click to jump)</div>
         <div id="glideList"></div>
       </div>
     </div>
@@ -2003,6 +2020,8 @@
       <tr><td><kbd>Shift</kbd> + drag</td><td>On the chart: select a range (stats, loop, zoom) &mdash; or use the chart's select button, also on touch</td></tr>
       <tr><td><kbd>S</kbd></td><td>Settings panel</td></tr>
       <tr><td><kbd>I</kbd></td><td>Flight statistics</td></tr>
+      <tr><td><kbd>M</kbd></td><td>Measure tool (click two points; Esc ends)</td></tr>
+      <tr><td><kbd>X</kbd></td><td>Select a range on the chart</td></tr>
       <tr><td><kbd>L</kbd></td><td>Live HUD</td></tr>
       <tr><td><kbd>C</kbd></td><td>Toggle follow pilot</td></tr>
       <tr><td><kbd>R</kbd></td><td>Fit whole track</td></tr>
@@ -2397,8 +2416,15 @@ function deriveSpeeds(arr) {
     for (const f of arr) f.alt_gps = f.alt_baro;
     arr.altFill = 'gps';      // no usable GNSS altitude -> baro for both
   }
+  // The difference window is defined in TIME (2 s either side), not in
+  // samples: identical to the old +-2 samples on a 1 Hz log, but a 5 s or
+  // 10 s logger no longer gets a 20-40 s window that flattens every
+  // thermal, and a 10 Hz one no longer differentiates pure noise.
   for (let i = 0; i < n; i++) {
-    const a = Math.max(0, i - win), b = Math.min(n - 1, i + win);
+    arr[i].ms = ts[i];
+    let a = i, b = i;
+    while (a > 0 && ts[i] - ts[a] < win * 1000) a--;
+    while (b < n - 1 && ts[b] - ts[i] < win * 1000) b++;
     const dt = (ts[b] - ts[a]) / 1000;
     arr[i].vz_b = 0; arr[i].vz_g = 0;
     if (dt <= 0) continue;
@@ -2981,7 +3007,7 @@ const PERSIST_KEYS = [
   'altSrc', 'varioSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown', 'varioGlide', 'showLegend', 'lowAglM',
   'exag', 'trackWidth', 'tube3d', 'smoothSubdiv', 'smoothTension',
   'kmlRateHz', 'spiralReconOn', 'spiralMode', 'spiralTurnsPerSec',
-  'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed', 'autoSpeed',
+  'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed',
   'swapButtons', 'showHud', 'hudCompact', 'showChart', 'chartMetric', 'camStyle',
   'autoTrim', 'cmpAlign', 'airspaceShow', 'taskShow', 'showAltLine', 'pilotLabel',
   'orbitSpeedDeg', 'orbitResumeSec', 'showXcTri', 'showCurtain',
@@ -3077,9 +3103,6 @@ const rawState = {
   pilotShape: 'cylinder',   // 'cylinder' = white body + magenta band + red wedge, 'arrow' = circle + triangle, 'wing' = canopy oval
   pilotSize: 0.5,       // multiplier on the base pilot marker pixel footprint
   speed: 5,
-  autoSpeed: false,     // opt-in: pick the starting speed from the flight's
-                        //   length on every load (see autoSpeedFor); off =
-                        //   the fixed, remembered `speed`
   playing: true,
   currentMs: 0,
   showChart: false,     // chart panel open/closed
@@ -3201,10 +3224,7 @@ const FACTORY_STATE = JSON.parse(JSON.stringify(rawState));
     }
     // The short-lived auto-speed default overwrote the remembered speed
     // with its own picks (up to 120x); go back to the fixed default.
-    if ('autoSpeed' in saved) {
-      rawState.autoSpeed = false;
-      rawState.speed = FACTORY_STATE.speed;
-    }
+    if ('autoSpeed' in saved) rawState.speed = FACTORY_STATE.speed;
   }
 }
 
@@ -3354,13 +3374,18 @@ function updateLegend() {
 }
 
 // Smoothed vario for coloring (7-sample window) so the gradient is calm.
-function smoothedVario(i) {
-  const w = 3;
-  const a = Math.max(0, i - w), b = Math.min(N - 1, i + w);
-  let sum = 0;
-  for (let k = a; k <= b; k++) sum += fixes[k].vz_ms;
-  return sum / (b - a + 1);
+// The window is 3.5 s either side in TIME: seven samples on a 1 Hz log
+// (as before), just the fix itself on a slow logger whose per-fix vario
+// already spans several seconds.
+const VARIO_SMOOTH_MS = 3500;
+function smoothedVzAt(fx, i) {
+  const t = fx[i].ms;
+  let sum = fx[i].vz_ms, cnt = 1;
+  for (let k = i - 1; k >= 0 && t - fx[k].ms <= VARIO_SMOOTH_MS; k--) { sum += fx[k].vz_ms; cnt++; }
+  for (let k = i + 1; k < fx.length && fx[k].ms - t <= VARIO_SMOOTH_MS; k++) { sum += fx[k].vz_ms; cnt++; }
+  return sum / cnt;
 }
+function smoothedVario(i) { return smoothedVzAt(fixes, i); }
 
 // Pilot marker -- built only from SolidPolygonLayer (a filled polygon at
 // altitude in world meters). This primitive renders reliably in
@@ -4734,9 +4759,8 @@ document.addEventListener('keydown', e => {
 // terrain height at both ends; with a flight loaded the read-out also says
 // what glide ratio the pilot would need from the current playback position
 // to reach the second point at ground level ("was I high enough to make
-// it over there?"). Like site drawing it works top-down with drag-to-pan,
-// because a click on tilted 3-D terrain picks a spot offset from the one
-// under the cursor; the previous view comes back on Done / Esc.
+// it over there?"). It works in whatever view is on screen -- tilted 3-D
+// included: each click is resolved against the DEM by pickTerrain().
 // ---------------------------------------------------------------------------
 let measure = null;        // { pts: [{lon, lat, elev}] } while the tool is on
 let _measureCam = null;
@@ -4812,17 +4836,56 @@ function renderMeasure() {
   }
   el.innerHTML = html;
 }
+// Where a screen point meets the terrain, in the CURRENT 3-D view. The ray
+// through the pixel is walked downward in 20 m height steps from well
+// above the terrain until it first dips below the DEM -- the NEAREST
+// crossing, so a ridge in front wins over the valley behind it -- and the
+// crossing is then pinned down by bisection. Uses deck.gl's viewport (the
+// same camera the track is drawn with) and the z14 DEM tiles, not
+// MapLibre's coarse render-time terrain. Falls back to the map's own pick
+// when no viewport is available or the walk finds no crossing.
+async function pickTerrain(point, fallbackLngLat) {
+  const fb = { lon: fallbackLngLat.lng, lat: fallbackLngLat.lat, elev: NaN };
+  try {
+    fb.elev = await demElevAt(fb.lon, fb.lat);
+    const dk = overlay && overlay._deck;
+    const vp = dk && dk.viewManager && dk.viewManager.getViewports()[0];
+    if (!vp || !vp.unproject || !isFinite(fb.elev)) return fb;
+    const exag = Math.max(0.01, state.exag);
+    // gap(z) > 0 while the ray at height z is still above the ground.
+    const at = async z => {
+      const q = vp.unproject([point.x, point.y], { targetZ: z * exag });
+      if (!q || !isFinite(q[0]) || !isFinite(q[1])) return null;
+      const e = await demElevAt(q[0], q[1]);
+      return isFinite(e) ? { lon: q[0], lat: q[1], elev: e, gap: z - e } : null;
+    };
+    let hi = fb.elev + 1200, top = await at(hi);
+    if (!top || top.gap <= 0) return fb;
+    let lo = null;
+    for (let z = hi - 20; z > fb.elev - 1500; z -= 20) {
+      const s = await at(z);
+      if (!s) break;
+      if (s.gap <= 0) { lo = z; break; }
+      hi = z;
+    }
+    if (lo == null) return fb;
+    let best = null;
+    for (let k = 0; k < 12; k++) {
+      const mid = (lo + hi) / 2, s = await at(mid);
+      if (!s) break;
+      best = s;
+      if (s.gap > 0) hi = mid; else lo = mid;
+    }
+    return best ? { lon: best.lon, lat: best.lat, elev: best.elev } : fb;
+  } catch (_) {
+    return fb;
+  }
+}
 function startMeasure() {
   if (measure || !map || !mapReady) return;
   if (siteDraw) finishSiteDraw(false);
   measure = { pts: [] };
   document.body.classList.add('measuring');
-  _measureCam = { pitch: map.getPitch(), bearing: map.getBearing(),
-                  zoom: map.getZoom(), follow: state.follow, playing: state.playing };
-  if (state.playing) setPlaying(false);
-  if (state.follow && window._setFollowPilot) window._setFollowPilot(false);
-  if (window._setSiteDrawPan) window._setSiteDrawPan(true);
-  map.easeTo({ pitch: 0, duration: 400 });
   const b = document.getElementById('btnMeasure');
   if (b) b.classList.add('on');
   applyMeasureLayer(); renderMeasure();
@@ -4831,15 +4894,6 @@ function stopMeasure() {
   if (!measure) return;
   measure = null;
   document.body.classList.remove('measuring');
-  if (window._setSiteDrawPan) window._setSiteDrawPan(false);
-  const saved = _measureCam; _measureCam = null;
-  if (saved && map) {
-    map.easeTo({ pitch: saved.pitch, bearing: saved.bearing, zoom: saved.zoom, duration: 400 });
-    setTimeout(() => {
-      if (saved.follow && window._setFollowPilot) window._setFollowPilot(true);
-      if (saved.playing) setPlaying(true);
-    }, 450);
-  }
   const b = document.getElementById('btnMeasure');
   if (b) b.classList.remove('on');
   applyMeasureLayer();
@@ -4849,13 +4903,20 @@ function stopMeasure() {
   if (c) c.onclick = () => { if (measure) { measure.pts = []; applyMeasureLayer(); renderMeasure(); } };
   if (d) d.onclick = () => stopMeasure();
 }
-function measureClick(lngLat) {
+function measureClick(lngLat, point) {
   if (!measure) return;
   if (measure.pts.length >= 2) measure.pts = [];
   const p = { lon: lngLat.lng, lat: lngLat.lat, elev: NaN };
   measure.pts.push(p);
   applyMeasureLayer(); renderMeasure();
-  demElevAt(p.lon, p.lat).then(v => { p.elev = v; if (measure) renderMeasure(); });
+  const m = measure;
+  (point ? pickTerrain(point, lngLat)
+         : demElevAt(p.lon, p.lat).then(v => ({ lon: p.lon, lat: p.lat, elev: v })))
+    .then(r => {
+      if (measure !== m) return;
+      p.lon = r.lon; p.lat = r.lat; p.elev = r.elev;
+      applyMeasureLayer(); renderMeasure();
+    });
 }
 loadSites();
 
@@ -4908,7 +4969,7 @@ function initMap() {
   map.addControl(new AppControl([
     { id: 'btnFollow', title: 'Toggle follow pilot (C)', icon: '&#x2316;', onClick: centerOnPilot },
     { id: 'btnFit', title: 'Fit whole track (R)', icon: '&#x2922;', onClick: () => fitTrack() },
-    { id: 'btnMeasure', title: 'Measure distance, bearing and height between two points', icon: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg>', onClick: () => { if (measure) stopMeasure(); else startMeasure(); } },
+    { id: 'btnMeasure', title: 'Measure distance, bearing and height between two points (M)', icon: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg>', onClick: () => { if (measure) stopMeasure(); else startMeasure(); } },
     { id: 'btnSwap', title: 'Swap mouse/touch drag controls', icon: '&#x21cc;', onClick: () => { if (window._setSwapButtons) window._setSwapButtons(!effSwapButtons()); } },
     { id: 'btnKk7', title: 'Toggle thermal / skyways overlay (thermal.kk7.ch)', icon: '&#x2668;', onClick: () => {
         state.kk7Show = !state.kk7Show;
@@ -5019,7 +5080,7 @@ function initMap() {
   // (a point site commits on the first click); double-click closes a
   // polygon. Outside draw mode these handlers do nothing.
   map.on('click', e => {
-    if (measure && !siteDraw) { measureClick(e.lngLat); return; }
+    if (measure && !siteDraw) { measureClick(e.lngLat, e.point); return; }
     if (!siteDraw) return;
     siteDraw.coords.push([e.lngLat.lng, e.lngLat.lat]);
     if (siteDraw.kind === 'point') finishSiteDraw(true);
@@ -6271,9 +6332,13 @@ function computeFlightStats() {
   }
   let thermalGain = 0, thermalS = 0;
   for (const th of thermals) { thermalGain += th.gainM; thermalS += th.durS; }
-  let glideM = 0, glideLoss = 0, glideS = 0;
+  // Glide summary: real glides only (soaring legs would drag both the
+  // glide ratio and the speed toward nonsense).
+  let glideM = 0, glidePathM = 0, glideLoss = 0, glideS = 0, glideN = 0;
   for (const g of glides) {
-    glideM += g.distKm * 1000; glideS += g.durS;
+    if (g.soar) continue;
+    glideN++;
+    glideM += g.distKm * 1000; glidePathM += g.pathKm * 1000; glideS += g.durS;
     if (g.dAlt < 0) glideLoss += -g.dAlt;
   }
   const xc = computeXcScores();
@@ -6285,18 +6350,23 @@ function computeFlightStats() {
     maxClimb, maxSink, maxGs, totalAscent,
     trackKm: cumKm[N - 1], straightKm, maxDistKm,
     thermalCount: thermals.length, thermalGain, thermalS,
-    glideCount: glides.length, glideKm: glideM / 1000, glideS,
+    glideCount: glideN, glideKm: glidePathM / 1000, glideS,
     glideLd: glideLoss > 1 ? glideM / glideLoss : 0,
     xcFreeKm: xc ? xc.freeKm : 0,
     xcTri: xc ? xc.tri : null,
   };
 }
 
-// Glides: the stretches between thermals, from takeoff to landing. Each
-// gets its straight-line distance, altitude change, glide ratio and mean
-// ground speed -- the other half of a cross-country flight, next to the
-// thermal list. Short hops (< 60 s or < 400 m) are not listed.
-let glides = [];        // [{i0, i1, durS, distKm, dAlt, ld, kmh}]
+// Legs between thermals, from takeoff to landing -- the other half of a
+// cross-country flight, next to the thermal list. Each leg is classed by
+// how straight it was: a GLIDE went somewhere (straight-line distance at
+// least half of the distance flown); anything else is SOARING -- ridge
+// passes, searching, S-turns -- where "glide ratio" means nothing.
+//   speed  = distance FLOWN / time  (the pilot's real ground speed; the
+//            straight-line figure read 15 km/h on a ridge-soaring leg)
+//   L/D    = straight-line distance / height lost, glides only
+// Short hops (< 60 s or < 400 m flown) are not listed.
+let glides = [];        // [{i0, i1, durS, distKm, pathKm, dAlt, ld, kmh, soar}]
 function detectGlides() {
   glides = [];
   if (N < 20 || landingIdx <= takeoffIdx) return;
@@ -6311,12 +6381,14 @@ function detectGlides() {
     if (i1 <= i0) continue;
     const durS = (tMs[i1] - tMs[i0]) / 1000;
     const distM = hav(fixes[i0].lat, fixes[i0].lon, fixes[i1].lat, fixes[i1].lon);
-    if (durS < 60 || distM < 400) continue;
+    const pathM = (cumKm[i1] - cumKm[i0]) * 1000;
+    if (durS < 60 || pathM < 400) continue;
     const dAlt = altOf(fixes[i1]) - altOf(fixes[i0]);
+    const soar = distM < 0.5 * pathM;
     glides.push({
-      i0, i1, durS, distKm: distM / 1000, dAlt,
-      ld: dAlt < -1 ? distM / -dAlt : Infinity,
-      kmh: distM / durS * 3.6,
+      i0, i1, durS, distKm: distM / 1000, pathKm: pathM / 1000, dAlt, soar,
+      ld: soar ? NaN : (dAlt < -1 ? distM / -dAlt : Infinity),
+      kmh: pathM / durS * 3.6,
     });
   }
 }
@@ -6922,7 +6994,33 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
                   .replace(/>/g, '&gt;');
 }
+// Fold state of the stats panel's lists, remembered across sessions.
+const STATS_FOLD_KEY = 'fv_stats_fold_v1';
+let _statsFoldWired = false;
+function wireStatsFolds() {
+  if (_statsFoldWired) return;
+  _statsFoldWired = true;
+  let folded = {};
+  try { folded = JSON.parse(localStorage.getItem(STATS_FOLD_KEY) || '{}') || {}; } catch (_) {}
+  for (const h of document.querySelectorAll('#statsPanel .subhead[id]')) {
+    h.classList.toggle('folded', !!folded[h.id]);
+    h.setAttribute('role', 'button');
+    h.setAttribute('tabindex', '0');
+    h.setAttribute('aria-expanded', folded[h.id] ? 'false' : 'true');
+    const toggle = () => {
+      const f = h.classList.toggle('folded');
+      h.setAttribute('aria-expanded', f ? 'false' : 'true');
+      folded[h.id] = f;
+      try { localStorage.setItem(STATS_FOLD_KEY, JSON.stringify(folded)); } catch (_) {}
+    };
+    h.addEventListener('click', toggle);
+    h.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  }
+}
 function renderStatsPanel() {
+  wireStatsFolds();
   const metaEl = document.getElementById('statsMeta');
   const rowsEl = document.getElementById('statsRows');
   const thHead = document.getElementById('thermalHead');
@@ -7072,8 +7170,7 @@ function renderStatsPanel() {
   if (tkHead && tkList) {
     if (task && taskResult) {
       tkHead.style.display = '';
-      tkHead.textContent = `Task \u00b7 ${taskResult.count}/${task.tps.length} turnpoints \u00b7 `
-        + `${dist(taskResult.distKm)} (click to jump)`;
+      tkHead.textContent = `Task \u00b7 ${taskResult.count}/${task.tps.length} turnpoints (click to jump)`;
       tkList.innerHTML = task.tps.map((tp, k) => {
         const ri = taskResult.reachedIdx[k];
         const r = tp.radius >= 1000 ? (tp.radius / 1000).toFixed(tp.radius % 1000 ? 1 : 0) + ' km'
@@ -7083,6 +7180,19 @@ function renderStatsPanel() {
           + `<span${ri >= 0 ? ' class="gain"' : ' style="color:var(--fg-mute)"'}>`
           + `${ri >= 0 ? fmtLocalHMS(tMs[ri]) : '\u2014'}</span></div>`;
       }).join('');
+      // Summary lines: distances, and the time on course once goal is made.
+      const tr = taskResult, sum = [];
+      sum.push(row('Distance', `${dist(tr.optKm)} <span style="color:var(--fg-mute)">optimised \u00b7 ${dist(tr.distKm)} centres</span>`));
+      if (tr.startIdx >= 0) {
+        sum.push(row('Start', fmtLocalHMS(tMs[tr.startIdx])));
+      }
+      if (tr.timeS > 0) {
+        const d = Math.round(tr.timeS);
+        sum.push(row('Time on course',
+          `${Math.floor(d / 3600)}:${String(Math.floor(d % 3600 / 60)).padStart(2, '0')}:${String(d % 60).padStart(2, '0')}`
+          + ` \u00b7 ${U.gsConv(tr.kmh).toFixed(1)} ${U.gsLabel()}`));
+      }
+      tkList.innerHTML += sum.join('');
       wireRows(tkList, 'data-tp', k => {
         const ri = taskResult.reachedIdx[k];
         if (ri >= 0) jumpTo(tMs[ri]);
@@ -7126,9 +7236,11 @@ function renderStatsPanel() {
           `<div class="thermal" data-gl="${k}" role="button" tabindex="0">`
           + `<span>${fmtLocalHMS(tMs[g.i0])}</span>`
           + `<span>${mmss(g.durS)}</span>`
-          + `<span>${U.distConv(g.distKm).toFixed(1)}</span>`
+          + `<span>${U.distConv(g.soar ? g.pathKm : g.distKm).toFixed(1)}</span>`
           + `<span>${g.dAlt >= 0 ? '+' : '\u2212'}${U.altConv(Math.abs(g.dAlt)).toFixed(0)}</span>`
-          + `<span class="gain">${isFinite(g.ld) ? (g.ld > 99 ? '>99' : g.ld.toFixed(1)) : '\u221e'}</span>`
+          + (g.soar
+            ? `<span style="color:var(--fg-mute)" title="Soaring leg: flown back and forth, no meaningful glide ratio">soar</span>`
+            : `<span class="gain">${isFinite(g.ld) ? (g.ld > 99 ? '>99' : g.ld.toFixed(1)) : '\u221e'}</span>`)
           + `<span>${U.gsConv(g.kmh).toFixed(0)}</span>`
           + `</div>`).join('');
       wireRows(glList, 'data-gl', k => { if (glides[k]) jumpTo(tMs[glides[k].i0]); });
@@ -7710,12 +7822,6 @@ function setupAppUi() {
   const autoTrimCb = document.getElementById('autoTrim');
   autoTrimCb.checked = state.autoTrim;
   autoTrimCb.addEventListener('change', e => { state.autoTrim = e.target.checked; });
-  const autoSpeedCb = document.getElementById('autoSpeedCb');
-  autoSpeedCb.checked = state.autoSpeed;
-  autoSpeedCb.addEventListener('change', e => {
-    state.autoSpeed = e.target.checked;
-    if (state.autoSpeed) applyAutoSpeed(true);
-  });
   const altLineCb = document.getElementById('altLineCb');
   altLineCb.checked = state.showAltLine;
   altLineCb.addEventListener('change', e => { state.showAltLine = e.target.checked; });
@@ -8243,7 +8349,13 @@ function setupAppUi() {
     pathDataCache = null;
     spiralCache = null;
     refreshChart();   // pilot trace shifts with offset
-    if (N > 1 && groundAlt) refreshLowPasses();   // AGL moves with it
+    // AGL moves with the offset. Debounced: re-scanning the flight and
+    // rebuilding the stats panel + timeline on every slider tick made
+    // dragging stutter on long logs.
+    if (N > 1 && groundAlt) {
+      clearTimeout(applyAltOffset._t);
+      applyAltOffset._t = setTimeout(refreshLowPasses, 200);
+    }
   }
   window.applyAltOffset = applyAltOffset;
   altOffSlider.addEventListener('input', e => applyAltOffset(parseFloat(e.target.value)));
@@ -8578,7 +8690,7 @@ function setupAppUi() {
     }
     setFollow(true);
     setSwapButtons(FACTORY_STATE.swapButtons);
-    for (const [id, key] of [['autoTrim', 'autoTrim'], ['autoSpeedCb', 'autoSpeed'],
+    for (const [id, key] of [['autoTrim', 'autoTrim'],
         ['airspaceShow', 'airspaceShow'], ['taskShowCb', 'taskShow'], ['altLineCb', 'showAltLine'],
         ['xcTriCb', 'showXcTri'], ['curtainCb', 'showCurtain'], ['legendCb', 'showLegend'],
         ['trackFadeCb', 'trackFadeOn'], ['curtainFadeCb', 'curtainFadeOn'],
@@ -8597,7 +8709,6 @@ function setupAppUi() {
     if (oaKey) oaKey.value = '';
     applyOpenAipLayer();
     applySpeedByIndex(speedToIndex(FACTORY_STATE.speed));
-    applyAutoSpeed(false);   // a loaded flight gets its own speed back
     state.pilotLabel = FACTORY_STATE.pilotLabel;
     state.showHud = FACTORY_STATE.showHud; updateHudVisibility();
     state.hudCompact = FACTORY_STATE.hudCompact; applyHudCompact();
@@ -9348,8 +9459,10 @@ function setupAppUi() {
       `${U.distConv(distM / 1000).toFixed(1)} ${U.distLabel()} straight`,
       `${U.distConv(pathKm).toFixed(1)} flown`,
     ];
-    if (dAlt < -1) bits.push(`L/D ${Math.min(99, distM / -dAlt).toFixed(1)}`);
-    bits.push(`${U.gsConv(distM / durS * 3.6).toFixed(0)} ${U.gsLabel()}`);
+    // Glide ratio only where the stretch actually went somewhere; speed
+    // is the real ground speed (distance flown), not the straight line.
+    if (dAlt < -1 && distM >= 0.5 * pathKm * 1000) bits.push(`L/D ${Math.min(99, distM / -dAlt).toFixed(1)}`);
+    bits.push(`${U.gsConv(pathKm / durS * 3600).toFixed(0)} ${U.gsLabel()}`);
     document.getElementById('chartSelText').textContent = bits.join('  \u00b7  ');
     chartSelEl.classList.remove('hidden');
   };
@@ -9563,6 +9676,13 @@ function setupAppUi() {
       case 'f': toggleFs(document.getElementById('map')); break;
       case 'o': fileInput.click(); break;
       case 'i': setStatsOpen(!statsOpen); break;
+      case 'm': if (measure) stopMeasure(); else startMeasure(); break;
+      case 'x': {
+        // Arm a chart range selection (opening the chart first if needed).
+        if (!state.showChart) document.getElementById('toggleChart').click();
+        setTimeout(() => document.getElementById('chartSelBtn').click(), state.showChart ? 0 : 350);
+        break;
+      }
       case 'l':
         state.showHud = !state.showHud;
         updateHudVisibility();
@@ -9601,6 +9721,7 @@ function setupAppUi() {
   wireExportUi();
   wireOfflineUi();
   wireSitesUi();
+  wireSettingHelp();
   wireA11y();
 
   // Touch screens have no hover, so the icon-only tool buttons never get
@@ -9620,6 +9741,35 @@ function setupAppUi() {
 // rows (label text lives in a sibling span), and pressed state for every
 // toggle. One observer keeps aria-pressed in sync with the .active class
 // the rest of the code already maintains.
+// Tap / click a setting label to unfold its explanation under the row
+// (see the .rowHelp CSS note). One open at a time.
+function wireSettingHelp() {
+  for (const lbl of document.querySelectorAll('.secBody .row .lbl[title]')) {
+    lbl.setAttribute('tabindex', '0');
+    lbl.setAttribute('role', 'button');
+    lbl.setAttribute('aria-expanded', 'false');
+    const toggle = () => {
+      const row = lbl.closest('.row');
+      if (!row) return;
+      const open = row.nextElementSibling && row.nextElementSibling.classList.contains('rowHelp')
+        ? row.nextElementSibling : null;
+      for (const h of document.querySelectorAll('.rowHelp')) h.remove();
+      for (const l of document.querySelectorAll('.secBody .lbl[aria-expanded="true"]')) {
+        l.setAttribute('aria-expanded', 'false');
+      }
+      if (open) return;
+      const h = document.createElement('div');
+      h.className = 'rowHelp';
+      h.textContent = lbl.getAttribute('title');
+      row.after(h);
+      lbl.setAttribute('aria-expanded', 'true');
+    };
+    lbl.addEventListener('click', toggle);
+    lbl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  }
+}
 function wireA11y() {
   for (const b of document.querySelectorAll('button[title]:not([aria-label])')) {
     if (b.textContent.trim().length <= 1) b.setAttribute('aria-label', b.title);
@@ -9705,57 +9855,6 @@ function askText(title, value, placeholder) {
 // First-run hint: the 3-D view rotates on left-drag (the opposite of most
 // web maps), which nobody discovers from a tooltip. Shown once per
 // browser on the first loaded flight; never in Explore mode.
-// Starting playback speed from the flight's length. One fixed speed can't
-// suit both ends: at 5x a 4 min top-to-bottom takes 50 s and a 6 h
-// cross-country 75 min. Playback is meant as a quick replay, so the
-// watch-time budget is short and grows with the square root of the airtime
-// (10 s + 80 s per sqrt-hour) -- long flights get more screen time without
-// scaling linearly:
-//    4 min -> 8x (30 s)      30 min -> 30x (1 min)    1 h -> 45x (80 s)
-//    2 h -> 60x (2 min)      3 h -> 60x (3 min)       6 h -> 120x (3 min)
-// The result snaps to the nearest "round" speed on a log scale.
-const AUTO_SPEEDS = [1, 2, 3, 5, 8, 10, 15, 20, 30, 45, 60, 90, 120];
-function autoSpeedFor(durS) {
-  if (!(durS > 0)) return 5;
-  const budgetS = 10 + 80 * Math.sqrt(durS / 3600);
-  const want = Math.log(durS / budgetS);
-  let best = AUTO_SPEEDS[0], bestD = Infinity;
-  for (const v of AUTO_SPEEDS) {
-    const d = Math.abs(Math.log(v) - want);
-    if (d < bestD) { bestD = d; best = v; }
-  }
-  return best;
-}
-// The stretch playback will actually cover: from the start point (takeoff
-// when "Start at takeoff" is on) to the detected landing. Ground time after
-// landing is ignored -- a logger left running in the car must not push the
-// whole flight to 60x.
-function playbackSpanS() {
-  if (!fixes || fixes.length < 2) return 0;
-  const fs = flightStats;
-  const start = (fs && state.autoTrim) ? fs.takeoffMs : T0;
-  const end = fs ? fs.landingMs : T1;
-  const span = (end - start) / 1000;
-  return span > 30 ? span : (T1 - T0) / 1000;
-}
-function applyAutoSpeed(announce) {
-  if (!state.autoSpeed || !window._setSpeed) return;
-  if (document.body.classList.contains('noTrack')) return;
-  const durS = playbackSpanS();
-  if (!(durS > 0)) return;
-  const v = autoSpeedFor(durS);
-  const changed = Math.abs(v - state.speed) > 1e-6;
-  window._setSpeed(v);
-  if (announce && changed) {
-    const el = document.getElementById('speedCtl');
-    if (el) {
-      el.classList.remove('autoPulse');
-      void el.offsetWidth;
-      el.classList.add('autoPulse');
-    }
-  }
-}
-
 function maybeShowFirstRunTip() {
   let seen = false;
   try { seen = !!localStorage.getItem('fv_tip_seen_v1'); } catch (_) {}
@@ -10700,8 +10799,6 @@ function loadFlight(newFixes, filename, opts) {
   // Init map on first load, hook up app UI
   initMap();
   setupAppUi();
-  // A mid-session pilot swap (keepCamera) keeps the speed being watched.
-  if (!opts.keepCamera) applyAutoSpeed(true);
   maybeShowFirstRunTip();
   state.chartTrack = -1;      // chart shows the (possibly new) main flight
   chartXRange = null;         // reset any chart zoom
@@ -11072,12 +11169,7 @@ function cmpAltDisplay(f) {
   return (a + state.altOffset) * state.exag;
 }
 
-function cmpSmoothedVz(fx, i) {
-  const w = 3, a = Math.max(0, i - w), b = Math.min(fx.length - 1, i + w);
-  let s = 0;
-  for (let k = a; k <= b; k++) s += fx[k].vz_ms;
-  return s / (b - a + 1);
-}
+function cmpSmoothedVz(fx, i) { return smoothedVzAt(fx, i); }
 
 // DEM ground elevation under a comparison track's fixes -- same Terrarium
 // pipeline (and tile cache) as the main track, sampled lazily the first
@@ -12034,12 +12126,19 @@ function taskNearTrack(tk) {
 }
 function adoptDeclaredTask() {
   taskNote = '';
-  if (task && task.src === 'file') return;      // the user's file wins
+  if (task && task.src === 'file') {
+    // The user's file wins -- while it belongs to this flight. Loading a
+    // flight from another site used to leave the old task on screen with
+    // no hint; drop it and say so.
+    if (N < 2 || taskNearTrack(task)) return;
+    taskNote = `Task ${task.name} is far from this flight and was removed.`;
+    showStatus(taskNote);
+  }
   task = null;
   const decl = flightMeta && flightMeta.task;
   if (!decl) return;
   if (taskNearTrack(decl)) task = decl;
-  else taskNote = 'The task declared in this file is far from the flight (a leftover from another site) and was ignored.';
+  else if (!taskNote) taskNote = 'The task declared in this file is far from the flight (a leftover from another site) and was ignored.';
 }
 function taskDistKm(tk) {
   let d = 0;
@@ -12047,6 +12146,48 @@ function taskDistKm(tk) {
     d += hav(tk.tps[k - 1].lat, tk.tps[k - 1].lon, tk.tps[k].lat, tk.tps[k].lon);
   }
   return d / 1000;
+}
+// Shortest route that touches every cylinder (what competition scoring
+// calls the optimised distance): one point per cylinder boundary, each
+// moved in turn to the spot that makes its two legs shortest, until the
+// total stops shrinking. A takeoff point is taken at its centre. Returns
+// km, or 0 when it cannot be worked out.
+function taskOptimisedKm(tk) {
+  const n = tk.tps.length;
+  if (n < 2) return 0;
+  const lat0 = tk.tps[0].lat, mLat = 111320, mLon = 111320 * Math.cos(lat0 * Math.PI / 180);
+  const C = tk.tps.map(tp => ({ x: tp.lon * mLon, y: tp.lat * mLat,
+    r: tp.kind === 'takeoff' ? 0 : tp.radius }));
+  const P = C.map(c => ({ x: c.x, y: c.y }));
+  const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const cost = (k, q) => (k > 0 ? d(P[k - 1], q) : 0) + (k < n - 1 ? d(q, P[k + 1]) : 0);
+  for (let pass = 0; pass < 30; pass++) {
+    let moved = 0;
+    for (let k = 0; k < n; k++) {
+      const c = C[k];
+      if (c.r <= 0) continue;
+      let best = P[k], bestC = cost(k, P[k]);
+      let lo = 0, hi = 2 * Math.PI, steps = 72;
+      for (let round = 0; round < 3; round++) {
+        let bestA = null;
+        for (let j = 0; j <= steps; j++) {
+          const a = lo + (hi - lo) * j / steps;
+          const q = { x: c.x + c.r * Math.sin(a), y: c.y + c.r * Math.cos(a) };
+          const v = cost(k, q);
+          if (v < bestC - 1e-6) { bestC = v; best = q; bestA = a; }
+        }
+        if (bestA == null) break;
+        const w = (hi - lo) / steps;
+        lo = bestA - w; hi = bestA + w; steps = 20;
+      }
+      moved += d(best, P[k]);
+      P[k] = best;
+    }
+    if (moved < 1) break;
+  }
+  let tot = 0;
+  for (let k = 1; k < n; k++) tot += d(P[k - 1], P[k]);
+  return tot / 1000;
 }
 function computeTaskResult() {
   taskResult = null;
@@ -12060,7 +12201,32 @@ function computeTaskResult() {
       reachedIdx[k] = i; k++;
     }
   }
-  taskResult = { reachedIdx, count: k, distKm: taskDistKm(task) };
+  // Race clock. It starts when the pilot LAST left the start cylinder
+  // before reaching the next turnpoint (an exit start: launch is usually
+  // inside it), or at the first entry when the start is flown into from
+  // outside; it stops on reaching the last cylinder. Start gates are not
+  // known here, so this is "time on course", not an official task time.
+  let startIdx = -1, endIdx = -1;
+  const sK = Math.max(0, task.tps.findIndex(tp => tp.kind === 'start'));
+  if (reachedIdx[sK] >= 0) {
+    startIdx = reachedIdx[sK];
+    const nextI = sK + 1 < task.tps.length ? reachedIdx[sK + 1] : -1;
+    if (nextI > startIdx) {
+      const tp = task.tps[sK];
+      for (let i = nextI; i > startIdx; i--) {
+        if (hav(fixes[i].lat, fixes[i].lon, tp.lat, tp.lon) <= tp.radius) { startIdx = i; break; }
+      }
+    }
+  }
+  if (k === task.tps.length) endIdx = reachedIdx[k - 1];
+  const optKm = taskOptimisedKm(task);
+  const done = startIdx >= 0 && endIdx > startIdx;
+  const timeS = done ? (tMs[endIdx] - tMs[startIdx]) / 1000 : 0;
+  taskResult = {
+    reachedIdx, count: k, distKm: taskDistKm(task), optKm,
+    startIdx, endIdx, timeS,
+    kmh: done && timeS > 0 ? optKm / timeS * 3600 : 0,
+  };
 }
 function circleRing(lat, lon, radiusM, n) {
   const ring = [];
@@ -12134,7 +12300,7 @@ function taskStatusText() {
   const bits = [];
   if (task) {
     bits.push(`${task.src === 'igc' ? 'Declared in the flight file' : task.name}: `
-      + `${task.tps.length} turnpoints, ${U.distConv(taskDistKm(task)).toFixed(1)} ${U.distLabel()}`);
+      + `${task.tps.length} turnpoints, ${U.distConv(taskOptimisedKm(task)).toFixed(1)} ${U.distLabel()} optimised`);
   }
   if (waypoints.length) bits.push(`${waypoints.length} waypoints`);
   if (!bits.length) bits.push(taskNote || 'No task loaded');
@@ -12301,15 +12467,41 @@ function exportTrack(kind) {
   downloadBlob(new Blob([text], { type: mime }), name);
   showStatus(`Exported ${r.i1 - r.i0 + 1} fixes (${r.section ? 'A\u2013B section' : 'takeoff to landing'}) \u2192 ${name}`);
 }
+// Screenshot = the 3-D view plus whatever read-outs are open on it (HUD,
+// chart, colour legend) -- the same composition a clean recording uses.
+// It used to be the bare map canvas, so a shared image showed a coloured
+// track with nothing saying what the colours or the moment were.
+function drawPanelOverlays(ctx, mapCanvas) {
+  const cw = mapCanvas.clientWidth || 1;
+  const dpr = mapCanvas.width / cw;
+  const mapRect = mapCanvas.getBoundingClientRect();
+  drawHudOverlay(ctx, dpr, mapRect);
+  drawChartOverlay(ctx, dpr, mapRect);
+  const lg = document.getElementById('varioLegend');
+  if (lg && lg.width > 0 && legendVisible()) {
+    const rl = lg.getBoundingClientRect();
+    if (rl.width) {
+      ctx.drawImage(lg, (rl.left - mapRect.left) * dpr, (rl.top - mapRect.top) * dpr,
+        rl.width * dpr, rl.height * dpr);
+    }
+  }
+}
 function doScreenshot() {
   if (!map) return;
   // WebGL back buffers are cleared after compositing; grab the pixels
   // inside a 'render' callback of a forced repaint so they're still live.
   map.once('render', () => {
     try {
+      const mapCanvas = map.getCanvas();
+      const cv = document.createElement('canvas');
+      cv.width = mapCanvas.width; cv.height = mapCanvas.height;
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(mapCanvas, 0, 0);
+      try { drawPanelOverlays(ctx, mapCanvas); }
+      catch (e) { console.warn('screenshot overlays failed:', e); }
       // JPEG: encodes a retina-sized canvas ~10x faster than PNG and suits
       // photographic satellite imagery (PNG stalled for seconds).
-      map.getCanvas().toBlob(blob => {
+      cv.toBlob(blob => {
         if (!blob) { showStatus('Screenshot failed', true); return; }
         saveMediaBlob(blob, exportFileName('.jpg'));
       }, 'image/jpeg', 0.92);
@@ -12470,19 +12662,7 @@ function drawCompositeFrame() {
   // Must run inside map 'render' (WebGL back buffer is still live there).
   ctx.drawImage(mapCanvas, 0, 0, recComp.canvas.width, mapCanvas.height * k);
   ctx.setTransform(k, 0, 0, k, 0, 0);
-  const cw = mapCanvas.clientWidth || 1;
-  const dpr = mapCanvas.width / cw;
-  const mapRect = mapCanvas.getBoundingClientRect();
-  drawHudOverlay(ctx, dpr, mapRect);
-  drawChartOverlay(ctx, dpr, mapRect);
-  const lg = document.getElementById('varioLegend');
-  if (lg && lg.width > 0 && legendVisible()) {
-    const rl = lg.getBoundingClientRect();
-    if (rl.width) {
-      ctx.drawImage(lg, (rl.left - mapRect.left) * dpr, (rl.top - mapRect.top) * dpr,
-        rl.width * dpr, rl.height * dpr);
-    }
-  }
+  drawPanelOverlays(ctx, mapCanvas);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 

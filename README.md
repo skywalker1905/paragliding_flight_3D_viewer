@@ -114,7 +114,9 @@ cached them or have been opened online at least once.
   centimetres with no lag; GPS altitude wanders by metres). Settings →
   Basics → **Vario source** switches it to GPS. Logs with no usable baro
   altitude (a constant 0 from loggers without a pressure sensor) use GPS
-  automatically, and vice versa.
+  automatically, and vice versa. Differencing and smoothing windows are
+  defined in seconds, not samples, so 5 s or 10 s loggers keep their
+  thermals and 10 Hz ones aren't differentiating noise.
 - **Colour legend**: a small key on the right edge of the map shows which
   climb / sink rate each colour stands for (settings → Trail & pilot;
   included in composited recordings).
@@ -260,7 +262,7 @@ cached them or have been opened online at least once.
   stretch of the flight and shows its duration, altitude change, mean climb, straight
   and flown distance, glide ratio and speed. **Loop** turns it into the
   A-B loop (which is also what track export uses), **Zoom** fits the
-  chart to it.
+  chart to it. `X` arms a selection from the keyboard.
 
 ### Flight statistics & thermals
 - **Stats panel** (`I` or the bar-chart button): takeoff / landing time
@@ -271,11 +273,15 @@ cached them or have been opened online at least once.
 - **Phase summary**: share of the airtime spent circling with the mean
   climb, mean glide ratio and speed on the glides, and the lowest
   in-flight height above ground with its time.
-- **Glides between thermals**: every glide is listed with duration,
-  straight distance, altitude change, glide ratio and speed — click one
-  to jump to it.
+- **Legs between thermals**: every leg is listed with duration,
+  distance, altitude change, glide ratio and speed — click one to jump to
+  it. A leg that went somewhere (straight-line distance at least half of
+  the distance flown) is a **glide** and gets a glide ratio; ridge passes
+  and searching are marked **soar** instead. Speed is always the distance
+  actually flown over time. Each list in the panel folds away on a click
+  of its heading.
 - **Low passes**: in-flight stretches closer to the terrain than the
-  *Low AGL alert* height (default 50 m, settings → Trail & pilot; the
+  *Low AGL alert* height (default 50 m, settings → Track & display; the
   first minute after takeoff and the last 90 s before landing don't
   count) are marked in amber under the timeline, listed in the panel,
   and turn the HUD's AGL value amber while they play.
@@ -317,11 +323,6 @@ cached them or have been opened online at least once.
 - **A-B loop**: repeat a section — `[` sets the start, `]` the end
   (`\` clears; buttons in settings too). The looped band is highlighted
   on the timeline.
-- **Auto speed** (settings, off by default — playback normally uses the
-  fixed speed you last set, 5× out of the box): when on, each newly loaded
-  flight starts at a speed chosen from its length — about 8× for a
-  4-minute sled ride, 45× for an hour, 90–120× beyond three hours — so a
-  short flight replays in about 30 seconds and a long one in 2–4 minutes.
 - Speed control 0.1× – 120×: drag the small slider, scroll the wheel
   (up = faster, 1 step / Shift = 10 steps), single-click the readout to
   cycle common presets (0.5 / 1 / 2 / 5 / 10 / 30 / 60 / 120×),
@@ -393,14 +394,23 @@ cached them or have been opened online at least once.
   drawn on the map; the stats panel lists **when each cylinder was first
   reached**, in order (click to jump), and the timeline gets a yellow tick
   per turnpoint.
+- Task summary: the **optimised distance** (shortest route touching every
+  cylinder) next to the centre-to-centre distance, the start time (the
+  last exit from the start cylinder before the next turnpoint) and, once
+  goal is made, the **time on course and speed**. Start gates are not
+  known to the viewer, so this is not an official task time.
+- A loaded task that lies far from a newly opened flight is removed, with
+  a note, instead of lingering from the previous site.
 
 ### Measure tool
 - The ruler button in the map controls measures between two clicked
   points: distance, bearing and the terrain height at both ends. With a
   flight loaded it also says how far the pilot currently is from the
   second point and what **glide ratio would be needed** to get there.
-- Like site drawing it works top-down with drag-to-pan for exact
-  picking; `Esc` or **Done** restores the previous view.
+- It works in whatever view is on screen, tilted 3-D included: each
+  click is resolved against the terrain model, so the point lands under
+  the cursor. `M` toggles the tool; `Esc` or **Done** ends it. The
+  read-out follows the Units setting.
 
 ### Airspace overlay
 - Load an **OpenAir** (`.txt`) airspace file (settings → **Airspace**).
@@ -414,9 +424,11 @@ cached them or have been opened online at least once.
   tiles; the key is stored locally and the overlay loads automatically.
 
 ### Export & share
-- **Screenshot**: save the current 3-D view as a JPEG (map + track
-  only). Camera button in the transport bar, or settings → Export.
-  Filenames carry a timestamp so repeated captures never collide.
+- **Screenshot**: save the current 3-D view as a JPEG, including the
+  Live HUD, chart and colour legend when they are open (buttons and
+  settings are left out). Camera button in the transport bar, or
+  settings → Export. Filenames carry a timestamp so repeated captures
+  never collide.
 - **Record video**: red-dot button in the transport bar (pulses while
   recording), click again to stop and save. With **Record all panels**
   on (settings → Export & share, the default) it captures the page exactly
@@ -469,20 +481,24 @@ Collapsible sections (open/closed state remembered):
   Director) with orbit speed / resume, Takeoff / Fit track shortcuts.
 - **Director camera** (shown while Director is selected) — per-phase
   distance + tilt, intro / finale lengths, and timeline shots.
-- **Playback** — start at takeoff, auto speed, A–B loop.
+- **Playback** — start at takeoff, A–B loop.
 - **Track & display** — terrain exaggeration, Alt offset (slider +
-  numeric box + **Auto** DEM alignment), track width, 3-D thickness,
+  numeric box + **Auto** DEM alignment), low AGL alert, track width, 3-D thickness,
   smoothing subdivisions, rounding, KML sample rate.
 - **Spiral reconstruction** — On/Off, Auto / Manual mode, turns / sec,
   detect threshold, manual range.
 - **Trail & pilot** — track & curtain fade (switch + hold + fade each),
   track curtain, colour mode + max climb / sink / normal glide, pilot shape / size,
-  altitude line, XC triangle, low AGL alert, colour legend.
+  colour legend, altitude line, XC triangle.
 
 Basics, Camera and Playback start open; the rest start collapsed.
 - **Comparison tracks**, **Task & waypoints**, **Airspace** (+ openAIP key), **Thermal map
   (kk7)**, **Launch & landing sites**, **Offline map**, **Export &
   share** — see above.
+
+Every setting with an explanation shows it under its row when the label
+is clicked or tapped — on touch screens, where tooltips don't exist, such
+labels carry an ⓘ marker.
 
 Universal slider ergonomics: double-click / double-tap any slider to
 reset it to its default; mouse-wheel nudges by `step` (Shift = ×10,
@@ -545,6 +561,8 @@ controls.
 | `O` | Open another file |
 | `S` | Toggle the settings drawer |
 | `I` | Toggle the flight-stats panel |
+| `M` | Measure tool |
+| `X` | Select a range on the chart |
 | `L` | Toggle the live HUD |
 | `?` | Controls & keyboard-shortcut overlay |
 | `Esc` | Close overlay / settings / stats, exit fullscreen |
