@@ -4891,7 +4891,9 @@ function initMap() {
   if (!('ontouchstart' in window) && !navigator.maxTouchPoints) {
     map.addControl(new maplibregl.FullscreenControl({ container: document.getElementById('map') }), 'top-right');
   }
-  map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+  // Scale bar follows the Units setting (the units toggle calls setUnit).
+  window._scaleCtl = new maplibregl.ScaleControl({ unit: state.units === 'metric' ? 'metric' : 'imperial' });
+  map.addControl(window._scaleCtl, 'bottom-left');
 
   // Prevent iOS WebView (Documents app etc.) from toggling its toolbar on
   // single taps that fall through to the page. By intercepting click events
@@ -7571,6 +7573,13 @@ function setupAppUi() {
     refreshChart();
     applyMapLabels();     // peak elevations switch m <-> ft
     renderStatsPanel();   // stats values carry units; re-render live
+    // Everything else that prints a distance or height: the measure
+    // read-out, the chart's range selection and the map's scale bar.
+    if (measure) renderMeasure();
+    if (fvChart.sel && window._renderChartSel) window._renderChartSel();
+    if (window._scaleCtl) {
+      try { window._scaleCtl.setUnit(state.units === 'metric' ? 'metric' : 'imperial'); } catch (_) {}
+    }
     const lv = document.getElementById('lowAglV');
     if (lv) lv.textContent = state.lowAglM > 0
       ? `${U.altConv(state.lowAglM).toFixed(0)} ${U.altLabel()}` : 'off';
@@ -9348,6 +9357,7 @@ function setupAppUi() {
     fvChart.sel = null; chartSelEl.classList.add('hidden'); drawChart();
   };
   window._clearChartSel = clearChartSel;
+  window._renderChartSel = renderChartSel;
   for (const ev of ['mousedown', 'click', 'dblclick', 'touchstart']) {
     chartSelEl.addEventListener(ev, e => e.stopPropagation());
   }
