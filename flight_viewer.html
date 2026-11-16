@@ -1277,8 +1277,8 @@
           <div class="ctl"><input type="checkbox" id="autoTrim" checked></div>
         </div>
         <div class="row">
-          <span class="lbl" title="Pick the starting playback speed from the flight's length each time a flight is loaded, so a short sled ride replays in about half a minute and a long cross-country in a few minutes. You can change the speed at any time; turn this off to keep your own speed from one flight to the next.">Auto speed</span>
-          <div class="ctl"><input type="checkbox" id="autoSpeedCb" checked></div>
+          <span class="lbl" title="Off (default): every flight plays at the speed you last set. On: pick the starting speed from the flight's length each time a flight is loaded, so a short sled ride replays in about half a minute and a long cross-country in a few minutes.">Auto speed</span>
+          <div class="ctl"><input type="checkbox" id="autoSpeedCb"></div>
         </div>
         <div class="row">
           <span class="lbl" title="Repeat a section of the flight: scrub to the start and press Set A (or the [ key), then Set B at the end (]). Playback loops inside the marked band on the timeline. \\ clears.">A–B loop</span>
@@ -1431,18 +1431,18 @@
           </div>
         </div>
         <div class="row" id="rowMaxUp">
-          <span class="lbl" title="Climb rate at which the track turns full red">Max climb</span>
+          <span class="lbl" title="Climb rate at which the track turns full red. The ramp is not linear: a weak climb is already yellow at 20% of this value and orange at half.">Max climb</span>
           <div class="ctl">
-            <input type="range" id="maxUp" min="0.5" max="30" step="0.5" value="2" data-default="2" style="width:90px">
-            <input type="number" id="maxUpN" value="2" step="0.5" min="0.1" data-default="2" style="width:54px">
+            <input type="range" id="maxUp" min="0.5" max="30" step="0.5" value="2.5" data-default="2.5" style="width:90px">
+            <input type="number" id="maxUpN" value="2.5" step="0.5" min="0.1" data-default="2.5" style="width:54px">
             <span style="color:var(--fg-mute)">m/s</span>
           </div>
         </div>
         <div class="row" id="rowMaxDown">
-          <span class="lbl" title="Sink rate at which the track turns full blue">Max sink</span>
+          <span class="lbl" title="Sink rate at which the track turns deep violet. A normal glide (about a third of this value) reads light blue.">Max sink</span>
           <div class="ctl">
-            <input type="range" id="maxDown" min="0.5" max="30" step="0.5" value="2" data-default="2" style="width:90px">
-            <input type="number" id="maxDownN" value="2" step="0.5" min="0.1" data-default="2" style="width:54px">
+            <input type="range" id="maxDown" min="0.5" max="30" step="0.5" value="3" data-default="3" style="width:90px">
+            <input type="number" id="maxDownN" value="3" step="0.5" min="0.1" data-default="3" style="width:54px">
             <span style="color:var(--fg-mute)">m/s</span>
           </div>
         </div>
@@ -1772,7 +1772,7 @@
         <button id="playBtn" class="tbtn primary" data-tip="Play / pause (Space)" aria-label="Play or pause">
           <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         </button>
-        <div id="speedCtl" title="Playback speed 0.1&times;-120&times; (wheel: 1 step, shift+wheel: 10 steps, click the value: cycle presets, dbl-click it: reset to 1&times;). With Auto speed on (Settings &rsaquo; Playback) each flight starts at a speed that suits its length.">
+        <div id="speedCtl" title="Playback speed 0.1&times;-120&times; (wheel: 1 step, shift+wheel: 10 steps, click the value: cycle presets, dbl-click it: reset to 1&times;).">
           <input type="range" id="speedSlider" min="0" max="128" step="1" value="13">
           <span id="speedV">5&times;</span>
         </div>
@@ -2823,7 +2823,7 @@ const PERSIST_KEYS = [
   'dirPitchIntro', 'dirPitchThermal', 'dirPitchGlide',
   'tileCacheOn', 'tileCacheMaxMB',
 ];
-const PREFS_SCHEMA = 6;
+const PREFS_SCHEMA = 7;
 const PERSIST_SET = new Set(PERSIST_KEYS);
 function loadSavedPrefs() {
   try {
@@ -2856,8 +2856,8 @@ const rawState = {
   mapLabels: true,      // place-name labels (cities, peaks, lakes) on the map
   units: 'metric',
   colorMode: 'vario',   // 'vario' | 'single'
-  varioMaxUp: 2,        // m/s -- saturates red at this climb rate
-  varioMaxDown: 2,      // m/s -- saturates blue at this sink rate
+  varioMaxUp: 2.5,      // m/s -- saturates red at this climb rate
+  varioMaxDown: 3,      // m/s -- saturates violet at this sink rate
   singleColor: [0, 255, 0],     // pure green
   follow: true,
   exag: 1.0,
@@ -2900,8 +2900,9 @@ const rawState = {
   pilotShape: 'cylinder',   // 'cylinder' = white body + magenta band + red wedge, 'arrow' = circle + triangle, 'wing' = canopy oval
   pilotSize: 0.5,       // multiplier on the base pilot marker pixel footprint
   speed: 5,
-  autoSpeed: true,      // pick the starting speed from the flight's length on
-                        //   every load (see autoSpeedFor); off = keep `speed`
+  autoSpeed: false,     // opt-in: pick the starting speed from the flight's
+                        //   length on every load (see autoSpeedFor); off =
+                        //   the fixed, remembered `speed`
   playing: true,
   currentMs: 0,
   showChart: false,     // chart panel open/closed
@@ -2990,7 +2991,8 @@ const FACTORY_STATE = JSON.parse(JSON.stringify(rawState));
   // On a schema bump, re-apply the defaults that changed meaning or value
   // so a stale saved default the user never actively chose doesn't stick
   // around; the user's next explicit pick persists again as usual.
-  if (saved._schema !== PREFS_SCHEMA) {
+  const savedSchema = +saved._schema || 0;
+  if (savedSchema < 6) {
     // Schema 6: curtain hold/fade defaults became 1 min / 1 min.
     // Schema 5: Director camera and the kk7 thermal layer became the
     // defaults (thermals on at 30% opacity, skyways off).
@@ -3011,6 +3013,21 @@ const FACTORY_STATE = JSON.parse(JSON.stringify(rawState));
     rawState.curtainFadeOn = true;
     rawState.curtainHoldSec = 60;
     rawState.curtainFadeSec = 60;
+  }
+  if (savedSchema < 7) {
+    // Schema 7: the vario colour ramp became a stop table with new
+    // saturation points (2.5 up / 3 down). Only an untouched old default
+    // (2 / 2) moves; a value the user picked stays.
+    if (rawState.varioMaxUp === 2 && rawState.varioMaxDown === 2) {
+      rawState.varioMaxUp = FACTORY_STATE.varioMaxUp;
+      rawState.varioMaxDown = FACTORY_STATE.varioMaxDown;
+    }
+    // The short-lived auto-speed default overwrote the remembered speed
+    // with its own picks (up to 120x); go back to the fixed default.
+    if ('autoSpeed' in saved) {
+      rawState.autoSpeed = false;
+      rawState.speed = FACTORY_STATE.speed;
+    }
   }
 }
 
@@ -3048,24 +3065,43 @@ const U = {
 function altOf(f)      { return state.altSrc === 'gps' ? f.alt_gps : f.alt_baro; }
 function altDisplay(f) { return (altOf(f) + state.altOffset) * state.exag; }
 
-// HSL -> RGB (CSS4 algorithm)
-function hslToRgb(h, s, l) {
-  s /= 100; l /= 100;
-  const k = n => (n + h / 30) % 12;
-  const a = s * Math.min(l, 1 - l);
-  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-  return [Math.round(f(0)*255), Math.round(f(8)*255), Math.round(f(4)*255)];
-}
-
-// Vario -> color. Negative vz (sink) -> blue; 0 -> green; positive (climb) -> red.
-// Smooth gradient via HSL hue interpolation 240 -> 120 -> 0.
+// Vario -> colour, through a table of hand-picked stops instead of a
+// linear hue sweep. The old 240 -> 120 -> 0 HSL sweep spent a third of its
+// range on hues the eye all reads as "green" (about 75-165 deg), so any
+// climb under ~0.7 m/s and any sink under ~0.7 m/s -- roughly half of a
+// typical flight -- looked the same as zero. The stops below are spaced by
+// how different the colours LOOK, and are denser near zero, so the sign of
+// the vario is visible from about +-0.2 m/s:
+//   climb: green -> lime -> yellow -> orange -> red   (x = vz / Max climb)
+//   sink:  green -> teal -> sky blue -> blue -> violet (x = vz / Max sink)
+// With the defaults (2.5 up, 3 down): +0.25 lime, +0.5 yellow, +1.25
+// orange, +2.5 red; a trim-speed glide (-1 m/s) is sky blue, -1.8 blue,
+// -3 violet.
+const VARIO_STOPS = [
+  [-1.00, 124,  58, 237],   // violet   -- heavy sink
+  [-0.60,  37,  99, 235],   // blue
+  [-0.33,  14, 165, 233],   // sky blue -- ordinary glide
+  [-0.12,  20, 200, 170],   // teal
+  [ 0.00,  74, 210,  95],   // green    -- zero
+  [ 0.10, 170, 225,  45],   // lime
+  [ 0.20, 250, 220,  25],   // yellow   -- weak climb
+  [ 0.50, 255, 140,  15],   // orange   -- solid climb
+  [ 0.78, 245,  65,  30],   // red-orange
+  [ 1.00, 215,  15,  60],   // red      -- strong climb
+];
 function varioColor(vz) {
   const denom = vz >= 0 ? Math.max(0.1, state.varioMaxUp)
                         : Math.max(0.1, state.varioMaxDown);
   let x = vz / denom;
-  if (x > 1) x = 1; else if (x < -1) x = -1;
-  const hue = 120 * (1 - x);   // -1 -> 240 blue, 0 -> 120 green, +1 -> 0 red
-  return hslToRgb(hue, 80, 50);
+  if (!(x > -1)) x = -1; else if (x > 1) x = 1;
+  const S = VARIO_STOPS;
+  let k = 1;
+  while (k < S.length - 1 && x > S[k][0]) k++;
+  const a = S[k - 1], b = S[k];
+  const t = (x - a[0]) / (b[0] - a[0]);
+  return [Math.round(a[1] + (b[1] - a[1]) * t),
+          Math.round(a[2] + (b[2] - a[2]) * t),
+          Math.round(a[3] + (b[3] - a[3]) * t)];
 }
 
 // Smoothed vario for coloring (7-sample window) so the gradient is calm.
@@ -4702,7 +4738,8 @@ class AppControl {
 // paths. Each bin becomes one PathLayer item with a single color, but inside
 // that item the joints are rounded so the geometry reads as one smooth ribbon.
 // Adjacent paths share an endpoint so they butt up cleanly.
-const VARIO_BINS = 32;     // -16..+16 -> 33 unique colors total
+const VARIO_BINS = 80;     // -40..+40 -> 81 unique colors total (the
+                           //   ramp changes fastest near zero)
 function varioBin(vz) {
   const denom = vz >= 0 ? Math.max(0.1, state.varioMaxUp)
                         : Math.max(0.1, state.varioMaxDown);

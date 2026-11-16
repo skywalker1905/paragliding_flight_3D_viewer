@@ -103,9 +103,11 @@ cached them or have been opened online at least once.
   construction, so thermal circles and long glides both come out fair
   with nothing to tune. A **Rounding** slider (0 – 100 %) blends between
   raw chords and the full spline.
-- Per-vertex **vario colouring** (red = climb, blue = sink, green ≈ 0),
-  with adjustable max climb / sink (default ±2 m/s), or **single
-  colour** (default pure green).
+- Per-vertex **vario colouring** on a non-linear ramp that shows the sign
+  of the vario from about ±0.2 m/s: green ≈ 0, then lime → yellow → orange
+  → red for climb and teal → sky blue → blue → violet for sink (an
+  ordinary glide reads sky blue). Adjustable max climb / sink (default
+  2.5 m/s up, 3 m/s down), or **single colour** (default pure green).
 - Adjustable pixel width (`Track width`) and optional metres-wide 3-D
   ribbon (`3-D thickness`) so the track reads as a solid body from any
   angle.
@@ -280,12 +282,11 @@ cached them or have been opened online at least once.
 - **A-B loop**: repeat a section — `[` sets the start, `]` the end
   (`\` clears; buttons in settings too). The looped band is highlighted
   on the timeline.
-- **Auto speed** (settings, on by default): each newly loaded flight starts
-  at a speed chosen from its length — about 8× for a 4-minute sled ride,
-  30× for half an hour, 45× for an hour, 60× for two hours, 90–120× beyond
-  three — so a short flight replays in about 30 seconds and a long one in
-  2–4 minutes. Change the speed whenever you like; turn the switch off to
-  keep your own speed from one flight to the next.
+- **Auto speed** (settings, off by default — playback normally uses the
+  fixed speed you last set, 5× out of the box): when on, each newly loaded
+  flight starts at a speed chosen from its length — about 8× for a
+  4-minute sled ride, 45× for an hour, 90–120× beyond three hours — so a
+  short flight replays in about 30 seconds and a long one in 2–4 minutes.
 - Speed control 0.1× – 120×: drag the small slider, scroll the wheel
   (up = faster, 1 step / Shift = 10 steps), single-click the readout to
   cycle common presets (0.5 / 1 / 2 / 5 / 10 / 30 / 60 / 120×),
