@@ -407,6 +407,18 @@ cached them or have been opened online at least once.
   points: distance, bearing and the terrain height at both ends. With a
   flight loaded it also says how far the pilot currently is from the
   second point and what **glide ratio would be needed** to get there.
+- **Glide planner**: with two points set, the read-out says what glide
+  ratio A → B needs and whether your wing makes it — *reachable, arrives
+  N m above B* or *falls short, lands after X of Y km*. Three inputs sit
+  right in the read-out: the **start height above A** (0 = taking off
+  there), the **wind** (speed and the direction it blows from, pre-filled
+  from the flight's own wind estimate) and the **wing** (still-air glide
+  ratio at trim speed; also in settings → Basics → Wing, default a typical
+  EN-A wing at L/D 8.5 @ 36 km/h — set your own). Wind is handled as a
+  proper triangle: crosswind is crabbed off, head / tailwind changes the
+  glide over the ground. The same check runs from the pilot's current
+  playback position to B. It assumes still air apart from the wind (no
+  lift, sink or speed-bar) — a planning estimate, not a promise.
 - It works in whatever view is on screen, tilted 3-D included: each
   click is resolved against the terrain model, so the point lands under
   the cursor. `M` toggles the tool; `Esc` or **Done** ends it. The
@@ -475,7 +487,8 @@ cached them or have been opened online at least once.
 
 ### Settings drawer
 Collapsible sections (open/closed state remembered):
-- **Basics** — units, altitude source (GPS / baro), vario source, basemap, map labels,
+- **Basics** — units, altitude source (GPS / baro), vario source, wing
+  (glide ratio + trim speed for the glide planner), basemap, map labels,
   swap L/R mouse (hidden on touch-only devices).
 - **Camera** — follow pilot, camera style (Center / Chase / Orbit /
   Director) with orbit speed / resume, Takeoff / Fit track shortcuts.

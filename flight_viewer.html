@@ -749,7 +749,7 @@
   /* Measure tool read-out: same floating bar, but the text may wrap. */
   #measureBar {
     position: absolute; top: 12px; left: 84px;
-    z-index: 30; display: none; align-items: center; gap: 8px;
+    z-index: 30; display: none; flex-direction: column; gap: 6px;
     padding: 7px 10px; border-radius: 10px; max-width: calc(100% - 420px);
     background: var(--bg-pane-strong); border: 1px solid var(--bd);
     box-shadow: var(--shadow);
@@ -766,6 +766,24 @@
     grid-template-columns: minmax(0, 1fr) auto; gap: 8px;
   }
   #taskList .thermal > span:last-child, #lowList .thermal > span:last-child { text-align: right; }
+  #measureBar .mTop { display: flex; align-items: center; gap: 8px; }
+  #measureBar .mTop #measureText { flex: 1; min-width: 0; }
+  #measurePlan {
+    display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center;
+    padding-top: 6px; border-top: 1px solid var(--bd);
+    color: var(--fg-dim); font-size: 11px;
+  }
+  #measurePlan label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  #measurePlan input {
+    width: 50px; padding: 2px 4px; font: inherit; color: var(--fg);
+    background: rgba(255,255,255,0.06); border: 1px solid var(--bd-2);
+    border-radius: 5px; text-align: right;
+  }
+  #measureVerdict { line-height: 1.5; }
+  #measureVerdict:empty { display: none; }
+  #measureVerdict .ok { color: #4ade80; font-weight: 600; }
+  #measureVerdict .no { color: #f87171; font-weight: 600; }
+  #measureVerdict .dim { color: var(--fg-dim); }
   #measureText { line-height: 1.45; }
   #measureText .dim { color: var(--fg-dim); }
   #btnMeasure.on { background: var(--accent); color: #fff; }
@@ -1205,10 +1223,26 @@
 
     <!-- Floating draw toolbar: appears while placing a launch / LZ so the
          user can finish without reopening the settings drawer. -->
-    <div id="measureBar" role="status">
-      <span id="measureText">Click two points on the map</span>
-      <button id="measureClear" class="btn-small">Clear</button>
-      <button id="measureDone" class="btn-small">Done</button>
+    <div id="measureBar">
+      <div class="mTop">
+        <span id="measureText" role="status">Click two points on the map</span>
+        <button id="measureClear" class="btn-small">Clear</button>
+        <button id="measureDone" class="btn-small">Done</button>
+      </div>
+      <div id="measurePlan" style="display:none">
+        <label title="Height above the ground at A where the glide starts: 0 = taking off from A, or the height you expect to have climbed to over A.">Start
+          <input type="number" id="mpStart" step="50" min="0" inputmode="numeric" aria-label="Start height above A">
+          <span class="u" data-u="alt">m</span> above A</label>
+        <label title="Wind for the glide: speed, and the direction it blows FROM (270 = westerly). Pre-filled from the flight's own wind estimate when there is one.">Wind
+          <input type="number" id="mpWind" step="1" min="0" inputmode="numeric" aria-label="Wind speed">
+          <span class="u" data-u="gs">km/h</span> from
+          <input type="number" id="mpWindDir" step="5" min="0" max="360" inputmode="numeric" aria-label="Wind direction, degrees it blows from">&deg;</label>
+        <label title="Your wing's still-air glide ratio and the speed it is flown at (trim). Also in Settings, Basics, Wing.">Wing L/D
+          <input type="number" id="mpLd" step="0.1" min="2" max="20" inputmode="decimal" aria-label="Wing glide ratio">
+          @ <input type="number" id="mpTrim" step="1" min="15" max="90" inputmode="numeric" aria-label="Wing trim speed">
+          <span class="u" data-u="gs">km/h</span></label>
+      </div>
+      <div id="measureVerdict"></div>
     </div>
     <div id="siteDrawBar" style="display:none">
       <span id="siteDrawBarHint">Click map to place…</span>
@@ -1255,6 +1289,16 @@
               <button data-v="gps">GPS</button>
             </div>
           </div>
+        <div class="row">
+          <span class="lbl" title="Your wing's still-air glide ratio and trim speed, used by the measure tool's glide planner to judge whether a point can be reached. The default is a typical EN-A wing (the class of the PHI Symphonia): manufacturers rarely publish glide figures, so set your own if you know them.">Wing</span>
+          <div class="ctl" style="gap:5px">
+            <span style="color:var(--fg-mute)">L/D</span>
+            <input type="number" id="wingLd" step="0.1" min="2" max="20" style="width:52px" aria-label="Wing glide ratio">
+            <span style="color:var(--fg-mute)">@</span>
+            <input type="number" id="wingTrim" step="1" min="15" max="90" style="width:52px" aria-label="Wing trim speed">
+            <span id="wingTrimU" style="color:var(--fg-mute)">km/h</span>
+          </div>
+        </div>
         </div>
         <div class="row">
           <span class="lbl">Basemap</span>
@@ -3004,7 +3048,7 @@ function parseFlightFile(text, filename) {
 // corrupt / stale blob can never wedge the app.
 const PREFS_STORAGE_KEY = 'fv_prefs_v1';
 const PERSIST_KEYS = [
-  'altSrc', 'varioSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown', 'varioGlide', 'showLegend', 'lowAglM',
+  'altSrc', 'varioSrc', 'wingLd', 'wingTrimKmh', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown', 'varioGlide', 'showLegend', 'lowAglM',
   'exag', 'trackWidth', 'tube3d', 'smoothSubdiv', 'smoothTension',
   'kmlRateHz', 'spiralReconOn', 'spiralMode', 'spiralTurnsPerSec',
   'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed',
@@ -3050,6 +3094,8 @@ let renderDirty = true;
 const rawState = {
   altSrc: 'gps',
   varioSrc: 'baro',     // 'baro' | 'gps' -- altitude the vario is derived from
+  wingLd: 8.5,          // still-air glide ratio of the pilot's wing (typical EN-A)
+  wingTrimKmh: 36,      // its trim speed, km/h -- both feed the glide planner
   base: 'sat',
   mapLabels: true,      // place-name labels (cities, peaks, lakes) on the map
   units: 'metric',
@@ -4807,12 +4853,104 @@ function applyMeasureLayer() {
   } catch (e) { console.warn('measure layer failed:', e); }
   renderDirty = true;
 }
+// ---- Glide planner ---------------------------------------------------------
+// "Can I get from A to B?" for a wing of glide ratio L/D flown at its trim
+// speed through a steady wind. The wing sinks at trim / (L/D) whatever the
+// wind does; the wind only changes the speed over the ground:
+//   crosswind c is cancelled by crabbing  -> forward airspeed sqrt(Va^2 - c^2)
+//   the along-track component is added    -> ground speed Vg
+//   glide ratio over the ground = Vg / sink = (L/D) * Vg / Va
+// Everything here is still air apart from the wind: no lift, no sink, no
+// speed-bar. It is a planning estimate, not a promise.
+const plan = { startAbove: 0, windKmh: null, windFrom: 0 };   // metres, km/h, deg
+function glideReach(distM, bearing, heightM, windKmh, windFrom) {
+  const va = Math.max(1, state.wingTrimKmh) / 3.6, ld = Math.max(1, state.wingLd);
+  const w = Math.max(0, windKmh || 0) / 3.6;
+  const rel = ((windFrom + 180) - bearing) * Math.PI / 180;   // wind-TO vs track
+  const along = w * Math.cos(rel), cross = w * Math.sin(rel);
+  if (Math.abs(cross) >= va) return { vg: 0, along, groundLd: 0, stuck: 'cross' };
+  const vg = Math.sqrt(va * va - cross * cross) + along;
+  if (vg <= 0.3) return { vg: 0, along, groundLd: 0, stuck: 'head' };
+  const groundLd = ld * vg / va;
+  const needM = distM / groundLd;
+  return { vg, along, groundLd, needM, arriveM: heightM - needM,
+           reachM: Math.max(0, heightM) * groundLd, timeS: distM / vg };
+}
+function planVerdict(label, distM, bearing, heightM) {
+  const alt = m => `${U.altConv(m).toFixed(0)} ${U.altLabel()}`;
+  const km = m => `${U.distConv(m / 1000).toFixed(m < 10000 ? 2 : 1)} ${U.distLabel()}`;
+  if (!(heightM > 1)) {
+    return `${label}: <span class="no">not reachable</span> <span class="dim">\u2014 B is ${alt(Math.abs(heightM))} above the start</span>`;
+  }
+  const r = glideReach(distM, bearing, heightM, plan.windKmh, plan.windFrom);
+  let html = `${label}: needs L/D <b>${(distM / heightM).toFixed(1)}</b>`;
+  if (r.stuck) {
+    return html + ` \u00b7 <span class="no">not reachable</span> <span class="dim">\u2014 the `
+      + (r.stuck === 'cross' ? 'crosswind' : 'headwind') + ` is stronger than the wing's trim speed</span>`;
+  }
+  const comp = Math.abs(r.along) < 0.3 ? ''
+    : `, ${U.gsConv(Math.abs(r.along) * 3.6).toFixed(0)} ${U.gsLabel()} ${r.along > 0 ? 'tailwind' : 'headwind'}`;
+  html += ` <span class="dim">\u00b7 wing gets ${r.groundLd.toFixed(1)} over the ground${comp}</span><br>`;
+  const mins = Math.max(1, Math.round(r.timeS / 60));
+  html += r.arriveM >= 0
+    ? `<span class="ok">reachable</span> \u2014 arrives ${alt(r.arriveM)} above B <span class="dim">\u00b7 ${mins} min</span>`
+    : `<span class="no">falls short</span> \u2014 ${alt(-r.arriveM)} too low, lands after ${km(r.reachM)} of ${km(distM)}`;
+  return html;
+}
+function syncPlanInputs() {
+  const set = (id, v) => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = v;
+  };
+  set('mpStart', Math.round(U.altConv(plan.startAbove)));
+  set('mpWind', Math.round(U.gsConv(plan.windKmh || 0)));
+  set('mpWindDir', Math.round(plan.windFrom));
+  set('mpLd', state.wingLd);
+  set('mpTrim', Math.round(U.gsConv(state.wingTrimKmh)));
+  set('wingLd', state.wingLd);
+  set('wingTrim', Math.round(U.gsConv(state.wingTrimKmh)));
+  for (const u of document.querySelectorAll('#measurePlan .u')) {
+    u.textContent = u.dataset.u === 'alt' ? U.altLabel() : U.gsLabel();
+  }
+  const wu = document.getElementById('wingTrimU');
+  if (wu) wu.textContent = U.gsLabel();
+}
+function wirePlanInputs() {
+  const num = (id, fn) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const v = parseFloat(el.value);
+      if (isFinite(v)) { fn(v); renderMeasure(); }
+    });
+    // Typing here must never reach the map / playback shortcuts.
+    el.addEventListener('keydown', e => e.stopPropagation());
+  };
+  const metric = () => state.units === 'metric';
+  num('mpStart', v => { plan.startAbove = Math.max(0, metric() ? v : v / 3.28084); });
+  num('mpWind', v => { plan.windKmh = Math.max(0, metric() ? v : v / 0.621371); });
+  num('mpWindDir', v => { plan.windFrom = ((v % 360) + 360) % 360; });
+  const ld = v => { state.wingLd = Math.max(2, Math.min(20, v)); };
+  const trim = v => { state.wingTrimKmh = Math.max(15, Math.min(90, metric() ? v : v / 0.621371)); };
+  num('mpLd', ld); num('wingLd', ld);
+  num('mpTrim', trim); num('wingTrim', trim);
+  for (const id of ['mpLd', 'wingLd', 'mpTrim', 'wingTrim']) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', syncPlanInputs);   // mirror the twin field
+  }
+  syncPlanInputs();
+}
 function renderMeasure() {
   const el = document.getElementById('measureText');
+  const planEl = document.getElementById('measurePlan');
+  const vEl = document.getElementById('measureVerdict');
   if (!el) return;
   const pts = measure ? measure.pts : [];
   const alt = m => `${U.altConv(m).toFixed(0)} ${U.altLabel()}`;
   const km = m => `${U.distConv(m / 1000).toFixed(m < 10000 ? 2 : 1)} ${U.distLabel()}`;
+  const two = pts.length === 2;
+  if (planEl) planEl.style.display = two ? '' : 'none';
+  if (vEl && !two) vEl.innerHTML = '';
   if (!pts.length) { el.textContent = 'Click two points on the map'; return; }
   if (pts.length === 1) {
     el.innerHTML = `A: ground ${isFinite(pts[0].elev) ? alt(pts[0].elev) : '\u2026'}`
@@ -4821,20 +4959,26 @@ function renderMeasure() {
   }
   const [a, b] = pts;
   const d = hav(a.lat, a.lon, b.lat, b.lon);
-  let html = `<b>${km(d)}</b> \u00b7 ${Math.round(bearingDeg(a.lat, a.lon, b.lat, b.lon))}\u00b0`;
+  const brg = bearingDeg(a.lat, a.lon, b.lat, b.lon);
+  let html = `<b>${km(d)}</b> \u00b7 ${Math.round(brg)}\u00b0`;
   if (isFinite(a.elev) && isFinite(b.elev)) {
     const dh = b.elev - a.elev;
     html += ` \u00b7 ground ${alt(a.elev)} \u2192 ${alt(b.elev)} (${dh >= 0 ? '+' : '\u2212'}${alt(Math.abs(dh))})`;
   }
-  if (N > 1 && isFinite(b.elev)) {
-    const i = findIdx(state.currentMs), f = fixes[i];
-    const dp = hav(f.lat, f.lon, b.lat, b.lon);
-    const h = altOf(f) + state.altOffset - b.elev;
-    html += `<br><span class="dim">Pilot now \u2192 B: ${km(dp)}, `
-      + (h > 1 ? `${alt(h)} above it \u2014 needs L/D ${(dp / h).toFixed(1)}`
-               : `${alt(Math.abs(h))} below it`) + `</span>`;
-  }
   el.innerHTML = html;
+  syncPlanInputs();
+  if (!vEl) return;
+  if (!(isFinite(a.elev) && isFinite(b.elev))) { vEl.innerHTML = '<span class="dim">Reading terrain\u2026</span>'; return; }
+  const lines = [planVerdict('A \u2192 B', d, brg, a.elev + plan.startAbove - b.elev)];
+  if (N > 1) {
+    const f = fixes[findIdx(state.currentMs)];
+    const dp = hav(f.lat, f.lon, b.lat, b.lon);
+    if (dp > 30) {
+      lines.push('<span class="dim">' + planVerdict(`Pilot now \u2192 B (${km(dp)})`, dp,
+        bearingDeg(f.lat, f.lon, b.lat, b.lon), altOf(f) + state.altOffset - b.elev) + '</span>');
+    }
+  }
+  vEl.innerHTML = lines.join('<br>');
 }
 // Where a screen point meets the terrain, in the CURRENT 3-D view. The ray
 // through the pixel is walked downward in 20 m height steps from well
@@ -4885,6 +5029,12 @@ function startMeasure() {
   if (measure || !map || !mapReady) return;
   if (siteDraw) finishSiteDraw(false);
   measure = { pts: [] };
+  // First use this session: start from the flight's own wind estimate.
+  if (plan.windKmh == null) {
+    const w = N > 1 ? windNear(state.currentMs) : null;
+    plan.windKmh = w ? Math.round(w.kmh) : 0;
+    plan.windFrom = w ? Math.round(w.fromDeg) : 0;
+  }
   document.body.classList.add('measuring');
   const b = document.getElementById('btnMeasure');
   if (b) b.classList.add('on');
@@ -4899,6 +5049,7 @@ function stopMeasure() {
   applyMeasureLayer();
 }
 {
+  wirePlanInputs();
   const c = document.getElementById('measureClear'), d = document.getElementById('measureDone');
   if (c) c.onclick = () => { if (measure) { measure.pts = []; applyMeasureLayer(); renderMeasure(); } };
   if (d) d.onclick = () => stopMeasure();
@@ -7687,6 +7838,7 @@ function setupAppUi() {
     renderStatsPanel();   // stats values carry units; re-render live
     // Everything else that prints a distance or height: the measure
     // read-out, the chart's range selection and the map's scale bar.
+    syncPlanInputs();
     if (measure) renderMeasure();
     if (fvChart.sel && window._renderChartSel) window._renderChartSel();
     if (window._scaleCtl) {
@@ -8709,6 +8861,8 @@ function setupAppUi() {
     if (oaKey) oaKey.value = '';
     applyOpenAipLayer();
     applySpeedByIndex(speedToIndex(FACTORY_STATE.speed));
+    state.wingLd = FACTORY_STATE.wingLd; state.wingTrimKmh = FACTORY_STATE.wingTrimKmh;
+    syncPlanInputs();
     state.pilotLabel = FACTORY_STATE.pilotLabel;
     state.showHud = FACTORY_STATE.showHud; updateHudVisibility();
     state.hudCompact = FACTORY_STATE.hudCompact; applyHudCompact();
