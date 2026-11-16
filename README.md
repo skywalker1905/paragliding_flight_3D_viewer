@@ -280,6 +280,12 @@ cached them or have been opened online at least once.
 - **A-B loop**: repeat a section — `[` sets the start, `]` the end
   (`\` clears; buttons in settings too). The looped band is highlighted
   on the timeline.
+- **Auto speed** (settings, on by default): each newly loaded flight starts
+  at a speed chosen from its length — about 1× for a 4-minute sled ride,
+  5× for half an hour, 10× for an hour, 20× for three hours, 30× for six —
+  so any flight plays back in roughly 3–12 minutes. Change the speed
+  whenever you like; turn the switch off to keep your own speed from one
+  flight to the next.
 - Speed control 0.1× – 120×: drag the small slider, scroll the wheel
   (up = faster, 1 step / Shift = 10 steps), single-click the readout to
   cycle common presets (0.5 / 1 / 2 / 5 / 10 / 30 / 60 / 120×),
@@ -401,7 +407,7 @@ Collapsible sections (open/closed state remembered):
   Director) with orbit speed / resume, Takeoff / Fit track shortcuts.
 - **Director camera** (shown while Director is selected) — per-phase
   distance + tilt, intro / finale lengths, and timeline shots.
-- **Playback** — start at takeoff, A–B loop.
+- **Playback** — start at takeoff, auto speed, A–B loop.
 - **Track & display** — terrain exaggeration, Alt offset (slider +
   numeric box + **Auto** DEM alignment), track width, 3-D thickness,
   smoothing subdivisions, rounding, KML sample rate.

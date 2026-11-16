@@ -329,6 +329,11 @@
     cursor: ew-resize;
   }
   #speedSlider { width: 100px; height: 4px; cursor: ew-resize; }
+  #speedCtl.autoPulse #speedV { animation: fvSpeedPulse 1.6s ease-out 1; }
+  @keyframes fvSpeedPulse {
+    0%, 35% { color: var(--accent-2); transform: scale(1.18); }
+    100% { transform: scale(1); }
+  }
   #speedV {
     font-size: 12px; color: var(--fg);
     min-width: 48px; text-align: right;
@@ -1272,6 +1277,10 @@
           <div class="ctl"><input type="checkbox" id="autoTrim" checked></div>
         </div>
         <div class="row">
+          <span class="lbl" title="Pick the starting playback speed from the flight's length each time a flight is loaded, so a short sled ride plays near real time and a long cross-country still fits in about ten minutes. You can change the speed at any time; turn this off to keep your own speed from one flight to the next.">Auto speed</span>
+          <div class="ctl"><input type="checkbox" id="autoSpeedCb" checked></div>
+        </div>
+        <div class="row">
           <span class="lbl" title="Repeat a section of the flight: scrub to the start and press Set A (or the [ key), then Set B at the end (]). Playback loops inside the marked band on the timeline. \\ clears.">A–B loop</span>
           <div class="ctl" style="gap:6px">
             <button id="loopSetA" class="btn-small">Set A</button>
@@ -1763,7 +1772,7 @@
         <button id="playBtn" class="tbtn primary" data-tip="Play / pause (Space)" aria-label="Play or pause">
           <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         </button>
-        <div id="speedCtl" title="Playback speed 0.1&times;-120&times; (wheel: 1 step, shift+wheel: 10 steps, click the value: cycle presets, dbl-click it: reset to 1&times;)">
+        <div id="speedCtl" title="Playback speed 0.1&times;-120&times; (wheel: 1 step, shift+wheel: 10 steps, click the value: cycle presets, dbl-click it: reset to 1&times;). With Auto speed on (Settings &rsaquo; Playback) each flight starts at a speed that suits its length.">
           <input type="range" id="speedSlider" min="0" max="128" step="1" value="13">
           <span id="speedV">5&times;</span>
         </div>
@@ -2801,7 +2810,7 @@ const PERSIST_KEYS = [
   'altSrc', 'base', 'mapLabels', 'units', 'colorMode', 'varioMaxUp', 'varioMaxDown',
   'exag', 'trackWidth', 'tube3d', 'smoothSubdiv', 'smoothTension',
   'kmlRateHz', 'spiralReconOn', 'spiralMode', 'spiralTurnsPerSec',
-  'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed',
+  'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed', 'autoSpeed',
   'swapButtons', 'showHud', 'hudCompact', 'showChart', 'chartMetric', 'camStyle',
   'autoTrim', 'cmpAlign', 'airspaceShow', 'showAltLine', 'pilotLabel',
   'orbitSpeedDeg', 'orbitResumeSec', 'showXcTri', 'showCurtain',
@@ -2891,6 +2900,8 @@ const rawState = {
   pilotShape: 'cylinder',   // 'cylinder' = white body + magenta band + red wedge, 'arrow' = circle + triangle, 'wing' = canopy oval
   pilotSize: 0.5,       // multiplier on the base pilot marker pixel footprint
   speed: 5,
+  autoSpeed: true,      // pick the starting speed from the flight's length on
+                        //   every load (see autoSpeedFor); off = keep `speed`
   playing: true,
   currentMs: 0,
   showChart: false,     // chart panel open/closed
@@ -7036,6 +7047,12 @@ function setupAppUi() {
   const autoTrimCb = document.getElementById('autoTrim');
   autoTrimCb.checked = state.autoTrim;
   autoTrimCb.addEventListener('change', e => { state.autoTrim = e.target.checked; });
+  const autoSpeedCb = document.getElementById('autoSpeedCb');
+  autoSpeedCb.checked = state.autoSpeed;
+  autoSpeedCb.addEventListener('change', e => {
+    state.autoSpeed = e.target.checked;
+    if (state.autoSpeed) applyAutoSpeed(true);
+  });
   const altLineCb = document.getElementById('altLineCb');
   altLineCb.checked = state.showAltLine;
   altLineCb.addEventListener('change', e => { state.showAltLine = e.target.checked; });
@@ -7882,7 +7899,7 @@ function setupAppUi() {
     }
     setFollow(true);
     setSwapButtons(FACTORY_STATE.swapButtons);
-    for (const [id, key] of [['autoTrim', 'autoTrim'],
+    for (const [id, key] of [['autoTrim', 'autoTrim'], ['autoSpeedCb', 'autoSpeed'],
         ['airspaceShow', 'airspaceShow'], ['altLineCb', 'showAltLine'],
         ['xcTriCb', 'showXcTri'], ['curtainCb', 'showCurtain'],
         ['trackFadeCb', 'trackFadeOn'], ['curtainFadeCb', 'curtainFadeOn'],
@@ -7901,6 +7918,7 @@ function setupAppUi() {
     if (oaKey) oaKey.value = '';
     applyOpenAipLayer();
     applySpeedByIndex(speedToIndex(FACTORY_STATE.speed));
+    applyAutoSpeed(false);   // a loaded flight gets its own speed back
     state.pilotLabel = FACTORY_STATE.pilotLabel;
     state.showHud = FACTORY_STATE.showHud; updateHudVisibility();
     state.hudCompact = FACTORY_STATE.hudCompact; applyHudCompact();
@@ -8311,6 +8329,7 @@ function setupAppUi() {
     speedV.textContent = fmtSpeed(state.speed);
   }
   applySpeedByIndex(speedToIndex(state.speed));   // initial sync from state
+  window._setSpeed = v => applySpeedByIndex(speedToIndex(v));
   speedSlider.addEventListener('input', () => {
     applySpeedByIndex(parseInt(speedSlider.value, 10));
   });
@@ -8883,6 +8902,56 @@ function askText(title, value, placeholder) {
 // First-run hint: the 3-D view rotates on left-drag (the opposite of most
 // web maps), which nobody discovers from a tooltip. Shown once per
 // browser on the first loaded flight; never in Explore mode.
+// Starting playback speed from the flight's length. One fixed speed can't
+// suit both ends: at 5x a 4 min top-to-bottom is over in 50 s and a 6 h
+// cross-country takes 75 min. The watch-time budget grows with the square
+// root of the airtime (2 min + 4 min per sqrt-hour), so long flights get
+// more screen time without scaling linearly:
+//    4 min -> 1x (4 min)     30 min -> 5x (6 min)     1 h -> 10x (6 min)
+//    2 h -> 15x (8 min)      3 h -> 20x (9 min)       6 h -> 30x (12 min)
+// The result snaps to the nearest "round" speed on a log scale.
+const AUTO_SPEEDS = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
+function autoSpeedFor(durS) {
+  if (!(durS > 0)) return 5;
+  const budgetS = 120 + 240 * Math.sqrt(durS / 3600);
+  const want = Math.log(durS / budgetS);
+  let best = AUTO_SPEEDS[0], bestD = Infinity;
+  for (const v of AUTO_SPEEDS) {
+    const d = Math.abs(Math.log(v) - want);
+    if (d < bestD) { bestD = d; best = v; }
+  }
+  return best;
+}
+// The stretch playback will actually cover: from the start point (takeoff
+// when "Start at takeoff" is on) to the detected landing. Ground time after
+// landing is ignored -- a logger left running in the car must not push the
+// whole flight to 60x.
+function playbackSpanS() {
+  if (!fixes || fixes.length < 2) return 0;
+  const fs = flightStats;
+  const start = (fs && state.autoTrim) ? fs.takeoffMs : T0;
+  const end = fs ? fs.landingMs : T1;
+  const span = (end - start) / 1000;
+  return span > 30 ? span : (T1 - T0) / 1000;
+}
+function applyAutoSpeed(announce) {
+  if (!state.autoSpeed || !window._setSpeed) return;
+  if (document.body.classList.contains('noTrack')) return;
+  const durS = playbackSpanS();
+  if (!(durS > 0)) return;
+  const v = autoSpeedFor(durS);
+  const changed = Math.abs(v - state.speed) > 1e-6;
+  window._setSpeed(v);
+  if (announce && changed) {
+    const el = document.getElementById('speedCtl');
+    if (el) {
+      el.classList.remove('autoPulse');
+      void el.offsetWidth;
+      el.classList.add('autoPulse');
+    }
+  }
+}
+
 function maybeShowFirstRunTip() {
   let seen = false;
   try { seen = !!localStorage.getItem('fv_tip_seen_v1'); } catch (_) {}
@@ -9790,6 +9859,8 @@ function loadFlight(newFixes, filename, opts) {
   // Init map on first load, hook up app UI
   initMap();
   setupAppUi();
+  // A mid-session pilot swap (keepCamera) keeps the speed being watched.
+  if (!opts.keepCamera) applyAutoSpeed(true);
   maybeShowFirstRunTip();
   state.chartTrack = -1;      // chart shows the (possibly new) main flight
   chartXRange = null;         // reset any chart zoom
