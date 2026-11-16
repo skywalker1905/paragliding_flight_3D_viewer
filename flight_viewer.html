@@ -8,13 +8,22 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Flight Viewer</title>
-<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="https://unpkg.com/deck.gl@9.0.33/dist.min.js"></script>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<!-- Warm up the connections the first screen needs. -->
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<link rel="preconnect" href="https://services.arcgisonline.com" crossorigin>
+<link rel="preconnect" href="https://s3.amazonaws.com" crossorigin>
+<!-- Pinned versions + Subresource Integrity: a tampered or swapped CDN file
+     is refused by the browser instead of running inside the viewer. -->
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"
+      integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
+        integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/deck.gl@9.0.33/dist.min.js"
+        integrity="sha384-XHQTthbMqLjNLGFczQvTftipdw8Ne9C9kZcWkfY5pMmUFUcUEYhs7QSImDcRwH5x" crossorigin="anonymous"></script>
 <!-- Optional: coord->IANA timezone lookup for proper DST. If offline /
      blocked, the viewer falls back to a lon-only UTC offset. -->
-<script src="https://unpkg.com/tz-lookup@6.1.25/tz.js" defer></script>
+<script src="https://unpkg.com/tz-lookup@6.1.25/tz.js" defer
+        integrity="sha384-hu4xDymJTssX8+i8qDUKexc5lIusgVeLPv72brg57d+WMdeCGtr3A1U8oW8PEtaP" crossorigin="anonymous"></script>
 <style>
   :root {
     --bg-deep:  #0b0f17;
@@ -200,8 +209,12 @@
     border-radius: 6px; padding: 5px 8px; font-size: 12px;
     transition: border-color 120ms;
   }
-  select:focus, input[type="number"]:focus, input[type="range"]:focus {
-    outline: none; border-color: var(--accent);
+  select:focus, input[type="number"]:focus { border-color: var(--accent); }
+  /* Keyboard focus is always visible; mouse / touch focus stays quiet. */
+  :focus:not(:focus-visible) { outline: none; }
+  button:focus-visible, input:focus-visible, select:focus-visible,
+  [tabindex]:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent-2); outline-offset: 2px;
   }
   input[type="range"] { accent-color: var(--accent); height: 4px; cursor: pointer; }
   input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; }
@@ -284,6 +297,30 @@
   }
   .tbtn.primary:hover { background: var(--accent-2); }
   .tbtn svg { width: 16px; height: 16px; }
+  /* Thin dividers between the tool clusters (file | panels | view | capture). */
+  #bottomBar .sep { width: 1px; height: 20px; background: var(--bd-2);
+                    margin: 0 3px; flex: none; }
+  /* Instant styled tooltips for the icon-only transport buttons (the
+     native title tooltip takes ~1 s to appear and cannot be styled). */
+  .tbtn[data-tip] { position: relative; }
+  @media (hover: hover) {
+    .tbtn[data-tip]::after {
+      content: attr(data-tip);
+      position: absolute; bottom: calc(100% + 9px); left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-pane-strong); color: var(--fg);
+      border: 1px solid var(--bd-2); border-radius: 6px;
+      padding: 3px 8px; font-size: 11px; font-weight: 400;
+      white-space: nowrap; pointer-events: none;
+      box-shadow: var(--shadow); z-index: 40;
+      opacity: 0; transition: opacity 100ms ease;
+    }
+    .tbtn[data-tip]:hover::after,
+    .tbtn[data-tip]:focus-visible::after { opacity: 1; transition-delay: 250ms; }
+    /* The outermost buttons anchor their tip to the bar edge. */
+    #grpTools .tbtn[data-tip]:last-child::after { left: auto; right: 0; transform: none; }
+    #grpPlay .tbtn[data-tip]:first-child::after { left: 0; transform: none; }
+  }
   #speedCtl {
     display: flex; align-items: center; gap: 8px;
     background: rgba(255,255,255,0.04);
@@ -358,7 +395,16 @@
     text-transform: uppercase; font-weight: 600;
     cursor: move; user-select: none;
   }
-  #chart { width: 100%; height: calc(100% - 28px); }
+  /* Column layout: the header keeps its natural height and the plot takes
+     whatever is left, at any panel size. */
+  #chartPanel { display: flex; flex-direction: column; }
+  #chartPanel .head { flex: none; gap: 8px; }
+  #chartLabel { flex: 1; min-width: 0; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
+  #chartPanel .head .toggle, #chartPanel .head .iconbtn { flex: none; }
+  #chart { width: 100%; flex: 1; min-height: 0; position: relative;
+           cursor: crosshair; }
+  #chartCanvas { display: block; width: 100%; height: 100%; }
   #chartCursor {
     position: absolute;
     top: 48px; /* header height (28px) + chart top margin (20px) */
@@ -400,12 +446,14 @@
   body.noTrack #progressGroup, body.noTrack #grpPlay,
   body.noTrack #addTrackBtn, body.noTrack #toggleChart,
   body.noTrack #toggleFuture, body.noTrack #toggleStats,
+  body.noTrack #toggleHud, body.noTrack #grpTools .sep,
+  body.noTrack #chartPanel, body.noTrack #statsPanel,
+  body.noTrack #tipCard,
   body.noTrack #hud { display: none !important; }
   #dropOverlay .sub { font-size: 13px; color: var(--fg-dim);
                        font-weight: 400; margin-top: 6px; }
 
   #fileInput { display: none; }
-  .modebar-container { display: none !important; }
 
   /* ---------- Progress bar wrapper: hover bubble + event ticks ---------- */
   #progWrap { flex: 1; min-width: 0; position: relative; display: flex;
@@ -450,13 +498,27 @@
   #settings .sec.closed .chev { transform: rotate(-90deg); }
   #settings .secBody { display: grid; gap: 12px; }
   #settings .secBody.closed { display: none; }
-  #settings .btn-small {
+  .btn-small {
     background: rgba(255,255,255,0.04); color: var(--fg);
     border: 1px solid var(--bd-2); border-radius: 7px;
     padding: 5px 10px; font-size: 12px; cursor: pointer;
     transition: background 100ms;
   }
-  #settings .btn-small:hover { background: rgba(255,255,255,0.09); }
+  .btn-small:hover { background: rgba(255,255,255,0.09); }
+  .btn-small.active { background: var(--accent); color: #fff;
+                      border-color: var(--accent); }
+  /* Two-step confirm: the first click arms the button (red, new label),
+     a second click within 3 s runs the destructive action. */
+  .btn-armed, .btn-small.btn-armed {
+    background: var(--bad) !important; color: #fff !important;
+    border-color: var(--bad) !important;
+  }
+  /* Wide segmented controls get their own line under the label instead of
+     being squeezed (and clipped) next to it. */
+  .row.stack { grid-template-columns: 1fr; gap: 6px; }
+  .row.stack > .ctl { justify-content: stretch; }
+  .row.stack .toggle { display: flex; width: 100%; }
+  .row.stack .toggle button { flex: 1; padding-left: 4px; padding-right: 4px; }
   #cmpList { display: grid; gap: 4px; }
   #cmpList .cmpItem {
     display: flex; align-items: center; gap: 8px; font-size: 11px;
@@ -470,7 +532,7 @@
   /* ---------- Stats panel ---------- */
   #statsPanel {
     position: absolute; left: 12px; top: 64px; z-index: 18;
-    width: 300px; max-height: calc(100% - 160px); overflow-y: auto;
+    width: 300px; max-height: calc(100% - 190px); overflow-y: auto;
     overflow-x: hidden; scrollbar-gutter: stable;
     background: var(--bg-pane-strong); border: 1px solid var(--bd);
     border-radius: var(--radius); box-shadow: var(--shadow);
@@ -486,6 +548,7 @@
     text-transform: uppercase;
   }
   #statsPanel .body { padding: 10px 12px; display: grid; gap: 4px;
+                      grid-template-columns: minmax(0, 1fr);
                       font-size: 12px; }
   #statsPanel .meta { color: var(--fg-dim); font-size: 11px;
                       padding-bottom: 6px; border-bottom: 1px solid var(--bd);
@@ -501,7 +564,9 @@
     letter-spacing: 0.05em; text-transform: uppercase;
   }
   #statsPanel .thermal {
-    display: flex; justify-content: space-between; gap: 8px;
+    display: grid; gap: 8px; align-items: baseline;
+    grid-template-columns: auto 1fr auto;
+    font-variant-numeric: tabular-nums;
     font-family: ui-monospace, Menlo, monospace; font-size: 11px;
     color: var(--fg-dim); cursor: pointer; padding: 3px 4px;
     border-radius: 5px;
@@ -509,6 +574,18 @@
   #statsPanel .thermal:hover { background: rgba(255,255,255,0.06);
                                 color: var(--fg); }
   #statsPanel .thermal .gain { color: var(--warn); font-weight: 600; }
+  /* Thermal rows: fixed columns so durations, gains and climb rates line
+     up and can be compared down the list. */
+  #thermalList .thermal {
+    grid-template-columns: 54px 32px 30px minmax(0, 1fr) 34px 32px;
+    gap: 4px;
+  }
+  #thermalList .thermal > span { text-align: right; white-space: nowrap;
+                                 min-width: 0; overflow: hidden; }
+  #thermalList .thermal > span:first-child { text-align: left; }
+  #thermalList .thHead { cursor: default; color: var(--fg-mute);
+                         font-size: 10px; }
+  #thermalList .thHead:hover { background: none; color: var(--fg-mute); }
 
   /* ---------- Help overlay (keyboard shortcuts) ---------- */
   #helpOverlay {
@@ -698,6 +775,76 @@
   }
   input.cmpLabel:focus { outline: none; border-color: var(--accent); }
 
+  /* HUD compact mode: the four numbers a pilot reads most. */
+  #hud.compact { min-width: 0; }
+  #hud.compact .row2.x, #hud.compact #hudCmp { display: none; }
+  #hud .iconbtn { width: 24px; height: 24px; font-size: 14px; }
+
+  /* In-app text prompt (site names) -- replaces window.prompt, which is
+     unstyled and silently blocked in several mobile WebViews. */
+  #askOverlay {
+    position: fixed; inset: 0; z-index: 310;
+    background: rgba(5, 8, 14, 0.6); backdrop-filter: blur(4px);
+    display: grid; place-items: center; padding: 24px;
+  }
+  #askOverlay.hidden { display: none; }
+  #askCard {
+    background: var(--bg-pane-strong); border: 1px solid var(--bd-2);
+    border-radius: 14px; box-shadow: var(--shadow);
+    padding: 18px 20px; width: 100%; max-width: 320px;
+    display: grid; gap: 12px;
+  }
+  #askCard h2 { margin: 0; font-size: 14px; color: var(--fg); }
+  #askInput {
+    background: rgba(255,255,255,0.05); color: var(--fg);
+    border: 1px solid var(--bd-2); border-radius: 8px;
+    padding: 9px 10px; font-size: 14px; width: 100%;
+  }
+  #askInput:focus { outline: none; border-color: var(--accent); }
+  #askCard .askBtns { display: flex; justify-content: flex-end; gap: 8px; }
+  #askCard .btn-primary { padding: 7px 18px; font-size: 13px; }
+  #askCard .btn-small { padding: 7px 14px; }
+
+  /* First-run controls hint. */
+  #tipCard {
+    /* Just above the transport bar: the one area that is free on a first
+       run (HUD top-right, gear top-left, chart and stats still closed). */
+    position: absolute; left: 12px; right: 12px; bottom: 122px;
+    margin: 0 auto; width: fit-content; max-width: 720px;
+    z-index: 29;
+    display: flex; align-items: center; gap: 12px;
+    background: var(--bg-pane-strong); border: 1px solid var(--bd-2);
+    border-radius: 10px; box-shadow: var(--shadow);
+    padding: 9px 10px 9px 14px; font-size: 12px; color: var(--fg-dim);
+    line-height: 1.55;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    transition: opacity 300ms ease;
+  }
+  #tipCard.hidden { opacity: 0; pointer-events: none; }
+  #tipCard .btn-small { flex: none; white-space: nowrap; }
+  #tipCard b { color: var(--fg); font-weight: 600; }
+  #tipCard kbd {
+    background: rgba(255,255,255,0.07); border: 1px solid var(--bd-2);
+    border-radius: 4px; padding: 0 5px; font-size: 11px; color: var(--fg);
+    font-family: ui-monospace, Menlo, monospace;
+  }
+
+  /* Pointer-specific copy: drag-and-drop wording only where there is a
+     mouse; mouse-button settings only where there are mouse buttons. */
+  .touchOnly { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    .touchOnly { display: block; }
+    .mouseOnly, #rowSwap { display: none !important; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+
   /* ========== Mobile / touch responsive ========== */
   @media (max-width: 768px) {
     /* Prevent double-tap zoom on interactive elements */
@@ -792,6 +939,16 @@
       resize: vertical;
     }
     #chartPanel.open { transform: translateY(0); }
+    #chartPanel.open {
+      transition: transform 280ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                  opacity 220ms ease, bottom 300ms ease;
+    }
+    /* Bar auto-hidden during playback: the chart drops into the freed
+       space instead of floating above an empty strip. */
+    body.ctrlHidden #chartPanel {
+      bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    }
+    #tipCard { bottom: calc(160px + env(safe-area-inset-bottom, 0px)); }
 
     /* Status pill -- avoid clashing with settings gear */
     #status {
@@ -848,6 +1005,10 @@
     #settings .body input[type="range"] {
       width: 80px !important;
     }
+    /* Eight tool buttons on one row of a 360-375 px phone. */
+    #bottomBar .sep { display: none; }
+    #grpTools { gap: 4px; }
+    #grpTools .tbtn { width: 38px; height: 38px; }
   }
 
   /* Mobile-specific bits for the newer panels */
@@ -894,14 +1055,18 @@
     <div class="hero">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
            stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/>
+        <!-- paraglider: canopy, lines, pilot -->
+        <path d="M1.5 9.5C3 5.6 7.1 3.2 12 3.2s9 2.4 10.5 6.3c-1.8-.9-3.6-1-5.3-.2-1.6-.9-3.3-1.3-5.2-1.3s-3.6.4-5.2 1.3c-1.7-.8-3.5-.7-5.3.2z"/>
+        <path d="M1.5 9.5l9.6 9.3M6.8 9.3l4.7 9.2M22.500 9.5l-9.6 9.3M17.2 9.3l-4.7 9.2" stroke-width="1"/>
+        <circle cx="12" cy="20.3" r="1.6"/>
       </svg>
       <h1>Flight Viewer</h1>
       <p class="sub">3D paragliding &amp; hang-gliding track playback</p>
     </div>
     <div id="landingDrop">
-      <div class="big">Drop a flight file here</div>
-      <div class="or">&mdash; or &mdash;</div>
+      <div class="big mouseOnly">Drop a flight file here</div>
+      <div class="or mouseOnly">&mdash; or &mdash;</div>
+      <div class="big touchOnly" style="margin-bottom:14px">Open a flight from your device</div>
       <button id="openBtn" class="btn-primary">Open file&hellip;</button>
       <div class="formats">
         Supports <code>.igc</code> <code>.gpx</code> <code>.kml</code>
@@ -963,22 +1128,27 @@
       <button id="siteDrawBarCancel" class="btn-small" style="color:var(--fg-mute)">Cancel</button>
     </div>
 
-    <button id="settingsFab" title="Settings (S)">&#x2699;</button>
+    <button id="settingsFab" title="Settings (S)" aria-label="Settings">&#x2699;</button>
 
     <div id="settings" class="hidden">
       <header>
         <span>Settings</span>
         <div style="display:flex;align-items:center;gap:8px">
           <button id="resetSettings" class="btn-small" title="Reset every setting to its factory default (also clears saved panel positions)">Reset all</button>
-          <button id="closeSettings" class="iconbtn" title="Close">&times;</button>
+          <button id="closeSettings" class="iconbtn" title="Close (Esc)" aria-label="Close settings">&times;</button>
         </div>
       </header>
       <div class="body">
         <div class="sec" data-sec="basics"><span class="chev">&#x25BE;</span><span>Basics</span></div>
         <div class="secBody" data-secbody="basics">
         <div class="row">
-          <span class="lbl" title="Place names on the map: cities, towns, villages, mountain peaks (with elevation) and lakes, from OpenStreetMap via OpenFreeMap. Labels stay upright and readable in tilted 3D views, on both basemaps and in explore-map mode.">Map labels</span>
-          <div class="ctl"><input type="checkbox" id="mapLabelsCb" checked></div>
+          <span class="lbl">Units</span>
+          <div class="ctl">
+            <div class="toggle" id="units">
+              <button data-v="metric">Metric</button>
+              <button data-v="imperial">Imperial</button>
+            </div>
+          </div>
         </div>
         <div class="row">
           <span class="lbl">Altitude source</span>
@@ -999,19 +1169,22 @@
           </div>
         </div>
         <div class="row">
-          <span class="lbl">Units</span>
-          <div class="ctl">
-            <div class="toggle" id="units">
-              <button data-v="metric">Metric</button>
-              <button data-v="imperial">Imperial</button>
-            </div>
-          </div>
+          <span class="lbl" title="Place names on the map: cities, towns, villages, mountain peaks (with elevation) and lakes, from OpenStreetMap via OpenFreeMap. Labels stay upright and readable in tilted 3D views, on both basemaps and in explore-map mode.">Map labels</span>
+          <div class="ctl"><input type="checkbox" id="mapLabelsCb" checked></div>
         </div>
+        <div class="row" id="rowSwap">
+          <span class="lbl" title="Swap left/right mouse-button actions. Default (off): left = rotate 3D view, right = pan — better for touchpads. On: left = pan, right = rotate. Middle-wheel zoom is unchanged.">Swap L/R mouse</span>
+          <div class="ctl"><input type="checkbox" id="swapButtons"></div>
+        </div>
+        </div>
+
+        <div class="sec" data-sec="camera"><span class="chev">&#x25BE;</span><span>Camera</span></div>
+        <div class="secBody" data-secbody="camera">
         <div class="row">
           <span class="lbl">Follow pilot</span>
           <div class="ctl"><input type="checkbox" id="followCam" checked></div>
         </div>
-        <div class="row">
+        <div class="row stack">
           <span class="lbl" title="Center: camera stays centred on the pilot, heading under your control. Chase: camera turns to look along the direction of flight. Orbit: camera circles slowly around the pilot while following — shows the 3D track from all sides. Director: cinematic auto-framing driven by the flight itself — orbits inside thermals, chases on glides, pulls back wide at takeoff and landing. Great for video export.">Camera style</span>
           <div class="ctl">
             <div class="toggle" id="camStyle">
@@ -1023,7 +1196,7 @@
           </div>
         </div>
         <div class="row" id="rowOrbitSpeed" style="display:none">
-          <span class="lbl" title="How fast the Orbit camera circles the pilot, in degrees per second. Drag on the map still overrides it at any time.">Orbit speed</span>
+          <span class="lbl" title="How fast the Orbit camera circles the pilot, in degrees per second. Drag on the map still overrides it at any time." id="orbitSpeedLbl">Orbit speed</span>
           <div class="ctl">
             <input type="range" id="orbitSpeed" min="0.5" max="10" step="0.5" value="4" data-default="4" style="width:120px">
             <span id="orbitSpeedV" style="min-width:44px;color:var(--fg-dim)">4.0°/s</span>
@@ -1037,18 +1210,10 @@
           </div>
         </div>
         <div class="row">
-          <span class="lbl" title="Skip the on-ground portion of the log: playback starts at the detected takeoff (first sustained movement) instead of the first fix.">Start at takeoff</span>
-          <div class="ctl"><input type="checkbox" id="autoTrim" checked></div>
-        </div>
-        <div class="row">
-          <span class="lbl" title="Swap left/right mouse-button actions. Default (off): left = rotate 3D view, right = pan — better for touchpads. On: left = pan, right = rotate. Middle-wheel zoom is unchanged.">Swap L/R mouse</span>
-          <div class="ctl"><input type="checkbox" id="swapButtons"></div>
-        </div>
-        <div class="row">
-          <span class="lbl">Camera</span>
+          <span class="lbl">Jump to</span>
           <div class="ctl" style="gap:6px">
-            <button id="centerStart" class="tbtn" title="Center on takeoff" style="width:auto;padding:0 10px">Takeoff</button>
-            <button id="fitTrack2" class="tbtn" title="Fit whole track (R)" style="width:auto;padding:0 10px">Fit</button>
+            <button id="centerStart" class="btn-small" title="Fly to the takeoff and play from the first fix">Takeoff</button>
+            <button id="fitTrack2" class="btn-small" title="Fit whole track (R)">Fit track</button>
           </div>
         </div>
         </div>
@@ -1100,8 +1265,24 @@
         <div id="dirShotList"></div>
         </div>
 
-        <div class="sec" data-sec="display"><span class="chev">&#x25BE;</span><span>Track &amp; display</span></div>
-        <div class="secBody" data-secbody="display">
+        <div class="sec" data-sec="playback"><span class="chev">&#x25BE;</span><span>Playback</span></div>
+        <div class="secBody" data-secbody="playback">
+        <div class="row">
+          <span class="lbl" title="Skip the on-ground portion of the log: playback starts at the detected takeoff (first sustained movement) instead of the first fix.">Start at takeoff</span>
+          <div class="ctl"><input type="checkbox" id="autoTrim" checked></div>
+        </div>
+        <div class="row">
+          <span class="lbl" title="Repeat a section of the flight: scrub to the start and press Set A (or the [ key), then Set B at the end (]). Playback loops inside the marked band on the timeline. \\ clears.">A–B loop</span>
+          <div class="ctl" style="gap:6px">
+            <button id="loopSetA" class="btn-small">Set A</button>
+            <button id="loopSetB" class="btn-small">Set B</button>
+            <button id="loopClear" class="btn-small" style="color:var(--fg-mute)" title="Clear loop" aria-label="Clear A-B loop">&times;</button>
+          </div>
+        </div>
+        </div>
+
+        <div class="sec closed" data-sec="display"><span class="chev">&#x25BE;</span><span>Track &amp; display</span></div>
+        <div class="secBody closed" data-secbody="display">
         <div class="row">
           <span class="lbl">Terrain exag.</span>
           <div class="ctl">
@@ -1114,7 +1295,7 @@
           <div class="ctl">
             <input type="range" id="altOffset" min="-500" max="500" step="1" value="0" data-default="0" style="width:75px">
             <input type="number" id="altOffsetN" value="0" step="1" data-default="0" style="width:52px">
-            <button id="autoAlignBtn" class="tbtn" title="Auto-align track altitude with DEM ground elevation" style="width:auto;height:24px;padding:0 8px;font-size:11px">Auto</button>
+            <button id="autoAlignBtn" class="btn-small" title="Auto-align track altitude with DEM ground elevation" style="padding:3px 8px;font-size:11px">Auto</button>
             <span style="color:var(--fg-mute)">m</span>
           </div>
         </div>
@@ -1133,7 +1314,7 @@
           </div>
         </div>
         <div class="row">
-          <span class="lbl" title="Cubic Hermite spline through every recorded fix. The original sample coordinates are NEVER moved -- only the lines between fixes become smooth curves. The value is how many sub-segments to insert per fix-to-fix segment. 0 = raw chord polyline (off).">Smoothing</span>
+          <span class="lbl" title="Centripetal Catmull-Rom spline through every recorded fix. The original sample coordinates are NEVER moved -- only the lines between fixes become smooth curves. The value is how many sub-segments to insert per fix-to-fix segment. 0 = raw chord polyline (off).">Smoothing</span>
           <div class="ctl">
             <input type="range" id="smoothSubdiv" min="0" max="20" step="1" value="6" data-default="6" style="width:120px">
             <span id="smoothSubdivV" style="min-width:44px;color:var(--fg-dim)">6 / seg</span>
@@ -1195,14 +1376,14 @@
           <span class="lbl" title="Manual time window. Use the playback controls to scrub to the moment, then click each button.">Range</span>
           <div class="ctl" style="flex-direction:column;align-items:flex-start;gap:3px">
             <div style="display:flex;gap:6px;align-items:center">
-              <button id="spiralSetStart" class="tbtn" style="padding:2px 8px;font-size:11px">Set start &leftarrow; now</button>
+              <button id="spiralSetStart" class="btn-small" style="padding:3px 8px;font-size:11px">Set start &leftarrow; now</button>
               <span id="spiralStartV" style="color:var(--fg-dim);font-size:11px">--:--:--</span>
             </div>
             <div style="display:flex;gap:6px;align-items:center">
-              <button id="spiralSetEnd" class="tbtn" style="padding:2px 8px;font-size:11px">Set end &leftarrow; now</button>
+              <button id="spiralSetEnd" class="btn-small" style="padding:3px 8px;font-size:11px">Set end &leftarrow; now</button>
               <span id="spiralEndV" style="color:var(--fg-dim);font-size:11px">--:--:--</span>
             </div>
-            <button id="spiralClear" class="tbtn" style="padding:2px 8px;font-size:11px;color:var(--fg-mute)">Clear range</button>
+            <button id="spiralClear" class="btn-small" style="padding:3px 8px;font-size:11px;color:var(--fg-mute)">Clear range</button>
           </div>
         </div>
         <div class="row" id="rowSpiralStatus" style="display:none">
@@ -1211,8 +1392,8 @@
         </div>
         </div>
 
-        <div class="sec" data-sec="pilot"><span class="chev">&#x25BE;</span><span>Trail &amp; pilot</span></div>
-        <div class="secBody" data-secbody="pilot">
+        <div class="sec closed" data-sec="pilot"><span class="chev">&#x25BE;</span><span>Trail &amp; pilot</span></div>
+        <div class="secBody closed" data-secbody="pilot">
         <div class="row">
           <span class="lbl" title="Fade the past track to transparent behind the pilot, using the hold/fade times below. Off by default (the whole flown track stays bright).">Track fade</span>
           <div class="ctl"><input type="checkbox" id="trackFadeCb"></div>
@@ -1303,14 +1484,6 @@
             <span id="curtainFadeV" style="min-width:44px;color:var(--fg-dim)">1:00</span>
           </div>
         </div>
-        <div class="row">
-          <span class="lbl" title="Repeat a section of the flight: scrub to the start and press Set A (or the [ key), then Set B at the end (]). Playback loops inside the marked band on the timeline. \\ clears.">A–B loop</span>
-          <div class="ctl" style="gap:6px">
-            <button id="loopSetA" class="tbtn" style="width:auto;padding:0 8px;font-size:11px">Set A</button>
-            <button id="loopSetB" class="tbtn" style="width:auto;padding:0 8px;font-size:11px">Set B</button>
-            <button id="loopClear" class="tbtn" style="width:auto;padding:0 8px;font-size:11px;color:var(--fg-mute)">&times;</button>
-          </div>
-        </div>
         </div>
 
         <div class="sec closed" data-sec="cmp"><span class="chev">&#x25BE;</span><span>Comparison tracks</span></div>
@@ -1389,7 +1562,7 @@
             <span id="kk7OpacityV" style="min-width:36px;color:var(--fg-dim)">30%</span>
           </div>
         </div>
-        <div class="row">
+        <div class="row stack">
           <span class="lbl" title="Season filter: statistics restricted to ±1.5 months around the given month (same quarters as thermal.kk7.ch). Default: whole year.">Season</span>
           <div class="ctl">
             <div class="toggle" id="kk7Season">
@@ -1515,19 +1688,19 @@
       <header>
         <span>Live</span>
         <div style="display: flex; align-items: center; gap: 8px;">
-          <span class="grip" style="cursor: move;">&#x2630;</span>
-          <button id="closeHud" class="iconbtn" title="Close Live HUD">&times;</button>
+          <button id="hudCompactBtn" class="iconbtn" title="Compact / full read-out" aria-label="Toggle compact HUD">&#x25B4;</button>
+          <button id="closeHud" class="iconbtn" title="Close Live HUD (L)" aria-label="Close Live HUD">&times;</button>
         </div>
       </header>
       <div class="body">
-        <div class="row2" title="Wall-clock time at the takeoff site (UTC offset estimated from launch longitude)."><span class="k">Time</span><span class="v" id="hTime">&mdash;</span></div>
+        <div class="row2 x" title="Wall-clock time at the takeoff site, daylight-saving aware (falls back to a longitude-based UTC offset when the timezone lookup is unavailable)."><span class="k">Time</span><span class="v" id="hTime">&mdash;</span></div>
         <div class="row2"><span class="k">Altitude</span><span class="v" id="hAlt">&mdash;</span></div>
         <div class="row2" title="Height above ground level, from the DEM directly below the pilot."><span class="k">AGL</span><span class="v" id="hAgl">&mdash;</span></div>
         <div class="row2"><span class="k">Ground sp.</span><span class="v" id="hGs">&mdash;</span></div>
         <div class="row2"><span class="k">Vario</span><span class="v" id="hVz">&mdash;</span></div>
-        <div class="row2" title="Glide ratio over ground (ground speed / sink rate), smoothed."><span class="k">Glide L/D</span><span class="v" id="hLd">&mdash;</span></div>
-        <div class="row2" title="Wind estimated from track drift while circling. Direction is where the wind blows FROM. Shows the estimate nearest to the current time."><span class="k">Wind est.</span><span class="v" id="hWind">&mdash;</span></div>
-        <div class="row2"><span class="k">Track dist.</span><span class="v" id="hDist">&mdash;</span></div>
+        <div class="row2 x" title="Glide ratio over ground (ground speed / sink rate), smoothed."><span class="k">Glide L/D</span><span class="v" id="hLd">&mdash;</span></div>
+        <div class="row2 x" title="Wind estimated from track drift while circling. Direction is where the wind blows FROM. Shows the estimate nearest to the current time."><span class="k">Wind est.</span><span class="v" id="hWind">&mdash;</span></div>
+        <div class="row2 x"><span class="k">Track dist.</span><span class="v" id="hDist">&mdash;</span></div>
         <div id="hudCmp" title="Live gap to the other pilots: horizontal distance and altitude difference (▲ = primary is higher)."></div>
       </div>
     </div>
@@ -1543,7 +1716,7 @@
           <button data-v="vario">Vario</button>
           <button data-v="speed">Speed</button>
         </div>
-        <button id="closeChart" class="iconbtn" title="Close Chart">&times;</button>
+        <button id="closeChart" class="iconbtn" title="Close chart" aria-label="Close chart">&times;</button>
       </div>
       <div id="chart"></div>
       <div id="chartCursor"></div>
@@ -1554,7 +1727,7 @@
         <span>Flight stats</span>
         <div style="display:flex;align-items:center;gap:8px">
           <span class="grip" style="cursor:move;color:var(--fg-mute);font-size:14px">&#x2630;</span>
-          <button id="closeStats" class="iconbtn" title="Close">&times;</button>
+          <button id="closeStats" class="iconbtn" title="Close (I)" aria-label="Close flight statistics">&times;</button>
         </div>
       </header>
       <div class="body">
@@ -1581,24 +1754,21 @@
           <div id="progBubble"></div>
         </div>
         <span class="t" id="progDur">00:00</span>
-        <button id="toggleHud" class="tbtn" title="Toggle Live HUD (L)" style="width: 28px; height: 28px; border-radius: 6px; padding: 0;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-        </button>
       </div>
       <!-- Row 2 left: playback controls (play sits bottom-left). -->
       <div class="group" id="grpPlay">
-        <button id="restartBtn" class="tbtn" title="Restart">
+        <button id="restartBtn" class="tbtn" data-tip="Restart" aria-label="Restart from the beginning">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5-6v12z"/></svg>
         </button>
-        <button id="playBtn" class="tbtn primary" title="Play / Pause (Space)">
+        <button id="playBtn" class="tbtn primary" data-tip="Play / pause (Space)" aria-label="Play or pause">
           <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         </button>
-        <div id="speedCtl" title="Playback speed 0.1&times;-120&times; (wheel: 1 step, shift+wheel: 10 steps, dbl-click: reset to 5&times;)">
+        <div id="speedCtl" title="Playback speed 0.1&times;-120&times; (wheel: 1 step, shift+wheel: 10 steps, click the value: cycle presets, dbl-click it: reset to 1&times;)">
           <input type="range" id="speedSlider" min="0" max="128" step="1" value="13">
           <span id="speedV">5&times;</span>
         </div>
-        <button id="loopBtn" class="tbtn"
-                title="A-B loop: 1st click sets A at the current time, 2nd sets B (loop starts), 3rd clears. Keys: [ ] \">
+        <button id="loopBtn" class="tbtn" data-tip="A&ndash;B loop: click = set A, set B, clear  ( [ ] \ )"
+                aria-label="A-B loop: first click sets A at the current time, second sets B and starts looping, third clears">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
             <path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
@@ -1610,50 +1780,45 @@
       </div>
       <!-- Row 2 right: file / panels / capture tools. -->
       <div class="group" id="grpTools">
-        <button id="loadBtn" class="tbtn" title="Open file (O)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <button id="loadBtn" class="tbtn" data-tip="Open file (O)" aria-label="Open file">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
         </button>
-        <button id="addTrackBtn" class="tbtn" title="Add comparison track">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
+        <button id="addTrackBtn" class="tbtn" data-tip="Add comparison track" aria-label="Add comparison track">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
             <path d="M12 11v5M9.5 13.5h5"/></svg>
         </button>
-        <button id="toggleChart" class="tbtn" title="Show altitude &amp; ground chart (gap = AGL)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 17l5-6 4 4 5-7 4 5"/>
-            <path d="M3 19l5-5 4 3 3-2 6 4" opacity="0.55"/>
-            <path d="M3 21h18"/>
-          </svg>
+        <span class="sep"></span>
+        <!-- Panels: one cluster, one icon each (gauge / chart / list). -->
+        <button id="toggleHud" class="tbtn" data-tip="Live HUD (L)" aria-label="Live HUD">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4.5-6"/><circle cx="12" cy="18" r="1"/></svg>
         </button>
-        <button id="toggleFuture" class="tbtn" title="Show full track (disable fade)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 18l5-5 4 3"/>
-            <path d="M12 16l4-3 5 5" stroke-dasharray="3 3"/>
-          </svg>
+        <button id="toggleChart" class="tbtn" data-tip="Chart: altitude / vario / speed" aria-label="Chart">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M4 16l5-6 4 4 7-9"/></svg>
         </button>
-        <button id="toggleStats" class="tbtn" title="Flight statistics (I)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/>
-          </svg>
+        <button id="toggleStats" class="tbtn" data-tip="Flight stats &amp; thermals (I)" aria-label="Flight statistics">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>
         </button>
-        <button id="shotBtnBar" class="tbtn" title="Save screenshot (PNG)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 7h3l2-2h6l2 2h3v12H4z"/><circle cx="12" cy="13" r="3.5"/>
-          </svg>
+        <span class="sep"></span>
+        <button id="toggleFuture" class="tbtn" data-tip="Show whole track" aria-label="Show whole track">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="18" r="2"/><circle cx="19" cy="6" r="2"/>
+            <path d="M7 18h7a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h7"/></svg>
         </button>
-        <button id="recBtnBar" class="tbtn" title="Record video (click again to stop &amp; save)">
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="12" cy="12" r="6"/>
-          </svg>
+        <span class="sep"></span>
+        <button id="shotBtnBar" class="tbtn" data-tip="Save screenshot (JPEG)" aria-label="Save screenshot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-2h6l2 2h3v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        </button>
+        <button id="recBtnBar" class="tbtn" data-tip="Record video (click again to stop)" aria-label="Record video">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
         </button>
       </div>
-    
+
+    </div>
+
+    <!-- First-run controls hint (shown once per browser). -->
+    <div id="tipCard" class="hidden" role="status">
+      <span id="tipText"></span>
+      <button id="tipClose" class="btn-small">Got it</button>
     </div>
 
     <div id="dropOverlay">
@@ -1665,11 +1830,26 @@
   </div>
 </div>
 
+<!-- Text prompt (site names) -->
+<div id="askOverlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+  <form id="askCard">
+    <h2 id="askTitle"></h2>
+    <input type="text" id="askInput" maxlength="40" autocomplete="off" aria-labelledby="askTitle">
+    <div class="askBtns">
+      <button type="button" id="askCancel" class="btn-small">Cancel</button>
+      <button type="submit" class="btn-primary">OK</button>
+    </div>
+  </form>
+</div>
+
 <!-- Keyboard shortcuts overlay -->
-<div id="helpOverlay" class="hidden">
+<div id="helpOverlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
   <div id="helpCard">
-    <h2>Keyboard shortcuts</h2>
+    <h2 id="helpTitle">Controls &amp; shortcuts</h2>
     <table>
+      <tr class="mouseOnly"><td><kbd>Drag</kbd></td><td><span id="helpDragL">Rotate / tilt the 3D view</span></td></tr>
+      <tr class="mouseOnly"><td><kbd>Right-drag</kbd></td><td><span id="helpDragR">Pan the map</span></td></tr>
+      <tr class="mouseOnly"><td><kbd>Scroll</kbd></td><td>Zoom the map</td></tr>
       <tr><td><kbd>Space</kbd></td><td>Play / pause</td></tr>
       <tr><td><kbd>&larr;</kbd> / <kbd>&rarr;</kbd></td><td>Seek &minus;10 s / +10 s (Shift: 60 s)</td></tr>
       <tr><td><kbd>&uarr;</kbd> / <kbd>&darr;</kbd></td><td>Playback speed up / down</td></tr>
@@ -2622,7 +2802,7 @@ const PERSIST_KEYS = [
   'exag', 'trackWidth', 'tube3d', 'smoothSubdiv', 'smoothTension',
   'kmlRateHz', 'spiralReconOn', 'spiralMode', 'spiralTurnsPerSec',
   'spiralThreshold', 'trailFadeSec', 'pilotShape', 'pilotSize', 'speed',
-  'swapButtons', 'showHud', 'showChart', 'chartMetric', 'camStyle',
+  'swapButtons', 'showHud', 'hudCompact', 'showChart', 'chartMetric', 'camStyle',
   'autoTrim', 'cmpAlign', 'airspaceShow', 'showAltLine', 'pilotLabel',
   'orbitSpeedDeg', 'orbitResumeSec', 'showXcTri', 'showCurtain',
   'recordFullUi', 'curtainFadeSec', 'trackFadeOn', 'trackHoldSec',
@@ -2716,6 +2896,7 @@ const rawState = {
   showChart: false,     // chart panel open/closed
   chartMetric: 'alt',   // 'alt' (pilot + ground) | 'vario' | 'speed'
   showHud: true,
+  hudCompact: 'auto',   // 'auto' (compact on phone-sized screens) | 'on' | 'off'
   swapButtons: false,   // default: left = rotate (3D view), right = pan.
                         //   Better for touchpads. Check to restore classic
                         //   left-pan / right-rotate mapping.
@@ -3689,7 +3870,7 @@ function wireOfflineUi() {
   const btn = document.getElementById('offlineDlBtn');
   if (btn) btn.onclick = () => { buildOfflineMap(); };
   const forget = document.getElementById('offlineForgetBtn');
-  if (forget) forget.onclick = () => { forgetOfflineMap(); };
+  armConfirm(forget, () => { forgetOfflineMap(); }, 'Forget?');
   updateOfflineStatusUi();
 
   // --- automatic tile cache controls ---
@@ -3716,9 +3897,9 @@ function wireOfflineUi() {
     if (maxV) maxV.textContent = state.tileCacheMaxMB + ' MB';
   }
   const clr = document.getElementById('tileCacheClear');
-  if (clr) clr.onclick = () => {
+  armConfirm(clr, () => {
     tcClear().then(() => { updateUse(); showStatus('Tile cache cleared'); });
-  };
+  }, 'Clear?');
   updateUse();
 }
 
@@ -3763,16 +3944,19 @@ function wireSitesUi() {
       ctl.className = 'ctl';
       const ren = document.createElement('button');
       ren.className = 'btn-small'; ren.textContent = '✎'; ren.title = 'Rename';
+      ren.setAttribute('aria-label', 'Rename ' + s.name);
       ren.onclick = () => {
-        const n = prompt('Site name:', s.name);
-        if (n) { s.name = n.slice(0, 40); saveSites(); applySitesLayer(); renderList(); }
+        askText('Site name', s.name).then(n => {
+          if (n) { s.name = n.slice(0, 40); saveSites(); applySitesLayer(); renderList(); }
+        });
       };
       const del = document.createElement('button');
       del.className = 'btn-small'; del.style.color = 'var(--fg-mute)';
       del.textContent = '×'; del.title = 'Delete';
-      del.onclick = () => {
+      del.setAttribute('aria-label', 'Delete ' + s.name);
+      armConfirm(del, () => {
         sites.splice(i, 1); saveSites(); applySitesLayer(); renderList();
-      };
+      }, 'Delete?');
       ctl.append(ren, del);
       row.append(lbl, ctl);
       box.appendChild(row);
@@ -4206,10 +4390,19 @@ function finishSiteDraw(commit) {
       geom = { kind: 'poly', coords: c };
     }
     if (geom) {
+      // Commit under a default name right away (the draw session ends
+      // synchronously below), then let the pilot name it in a dialog.
       const dflt = siteDraw.type === 'launch' ? 'Launch' : 'LZ';
-      const name = (prompt(`${dflt} name:`, '') || dflt).slice(0, 40);
-      sites.push({ type: siteDraw.type, name, geom });
+      const site = { type: siteDraw.type, name: dflt, geom };
+      sites.push(site);
       saveSites();
+      askText(`Name this ${siteDraw.type === 'launch' ? 'launch' : 'landing zone'}`,
+              '', dflt).then(n => {
+        if (!n) return;
+        site.name = n.slice(0, 40);
+        saveSites(); applySitesLayer();
+        if (window._renderSiteList) window._renderSiteList();
+      });
     }
   }
   siteDraw = null;
@@ -4374,10 +4567,7 @@ function initMap() {
     // Bottom-left so the control slot does not compete with NavigationControl
     // (+/- zoom, compass) stacked in the top-right corner.
     map.addControl(overlay, 'bottom-left');
-    Plotly.newPlot('chart', [], {
-      margin: { l: 55, r: 20, t: 20, b: 36 },
-      paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-    }, { displayModeBar: false, responsive: true });
+    chartInit();
     chartReady = true;
     mapReady = true;
     patchTerrainRasterFallback();
@@ -5695,16 +5885,275 @@ let chartReady = false;
 // wheel-zooming over the chart; null = full flight. Cursor sync and
 // click-to-seek read the live axis range, so they follow zoom for free.
 let chartXRange = null;
-function vline(t) {
-  return { type: 'line', x0: t, x1: t, yref: 'paper', y0: 0, y1: 1,
-           line: { color: '#ef4444', width: 1.5 } };
+// ---------------------------------------------------------------------------
+// Self-drawn canvas chart. A single time-series panel does not justify a
+// multi-megabyte plotting library on the critical load path, so the chart
+// is painted straight onto a 2-D canvas: nice-number axes, min/max column
+// decimation (a 6 h / 22 000-fix flight draws in about a millisecond), a
+// hover read-out, and a legend that sits in the top margin so it can never
+// cover the curve.
+//
+// x values are "fake-UTC" ms (true epoch ms shifted by the launch site's
+// UTC offset) so the UTC getters print the launch-local clock.
+// ---------------------------------------------------------------------------
+const fvChart = {
+  canvas: null, ctx: null,
+  model: null,        // { xs, series[], yLo, yHi, yTitle, zeroLine }
+  geo: null,          // plot rect in CSS px + visible x range: {l,t,w,h,r0,r1}
+  hoverX: null,       // CSS px inside #chart, or null
+  raf: 0,
+};
+function chartInit() {
+  const host = document.getElementById('chart');
+  if (!host || fvChart.canvas) return;
+  const c = document.createElement('canvas');
+  c.id = 'chartCanvas';
+  c.setAttribute('role', 'img');
+  c.setAttribute('aria-label', 'Flight chart');
+  host.appendChild(c);
+  fvChart.canvas = c;
+  fvChart.ctx = c.getContext('2d');
+  host.addEventListener('mousemove', e => {
+    const r = host.getBoundingClientRect();
+    fvChart.hoverX = e.clientX - r.left;
+    scheduleChartDraw();
+  });
+  host.addEventListener('mouseleave', () => {
+    fvChart.hoverX = null;
+    scheduleChartDraw();
+  });
 }
-// Convert real epoch ms -> ISO string whose UTC components are the
-// launch site's local time. Used for everything passed to Plotly so
-// that date-axis tick formatting (always UTC in Plotly 2.x) displays
-// the launch local clock unambiguously.
-function tShiftIso(ms) {
-  return new Date(ms + tzOffsetMin * 60000).toISOString();
+function scheduleChartDraw() {
+  if (fvChart.raf) return;
+  fvChart.raf = requestAnimationFrame(() => { fvChart.raf = 0; drawChart(); });
+}
+// 1 / 2 / 5 x 10^n step giving roughly `target` ticks across `span`.
+function niceStep(span, target) {
+  const raw = span / Math.max(1, target);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+}
+const CHART_TIME_STEPS = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800,
+                          3600, 7200, 10800, 21600].map(s => s * 1000);
+function chartFmtClock(ms, withSec) {
+  const d = new Date(ms);
+  const p = n => (n < 10 ? '0' : '') + n;
+  return p(d.getUTCHours()) + ':' + p(d.getUTCMinutes())
+       + (withSec ? ':' + p(d.getUTCSeconds()) : '');
+}
+// First index with xs[i] >= x.
+function chartLowerBound(xs, x) {
+  let lo = 0, hi = xs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] < x) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+function drawChart() {
+  const c = fvChart.canvas, m = fvChart.model;
+  if (!c) return;
+  const host = c.parentElement;
+  const W = host.clientWidth, H = host.clientHeight;
+  if (W < 40 || H < 30) { fvChart.geo = null; return; }
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const bw = Math.round(W * dpr), bh = Math.round(H * dpr);
+  if (c.width !== bw || c.height !== bh) { c.width = bw; c.height = bh; }
+  const ctx = fvChart.ctx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (!m || !m.xs.length) { fvChart.geo = null; return; }
+
+  const compact = W < 420;
+  const fontPx = compact ? 10 : 11;
+  const font = `${fontPx}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const legend = m.series.length > 1;
+  const L = compact ? 44 : 54, R = 14;
+  const T = legend ? 22 : 12, B = 24;
+  const pw = W - L - R, ph = H - T - B;
+  if (pw < 20 || ph < 16) { fvChart.geo = null; return; }
+
+  // Visible x window.
+  const full0 = m.xs[0], full1 = m.xs[m.xs.length - 1];
+  let r0 = full0, r1 = full1;
+  if (chartXRange) { r0 = chartXRange[0]; r1 = chartXRange[1]; }
+  if (!(r1 > r0)) r1 = r0 + 1000;
+  const i0 = Math.max(0, chartLowerBound(m.xs, r0) - 1);
+  const i1 = Math.min(m.xs.length - 1, chartLowerBound(m.xs, r1));
+
+  // y range: fixed by the model (altitude view) or fitted to what is on
+  // screen, so zooming the time axis also stretches a quiet stretch.
+  let yLo = m.yLo, yHi = m.yHi;
+  if (yLo == null || yHi == null) {
+    let lo = Infinity, hi = -Infinity;
+    for (const s of m.series) {
+      for (let i = i0; i <= i1; i++) {
+        const v = s.y[i];
+        if (v == null || !(v === v)) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    if (!isFinite(lo)) { lo = 0; hi = 1; }
+    if (m.zeroLine) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+    const pad = Math.max(1e-6, (hi - lo) * 0.08) || 0.5;
+    yLo = lo - pad; yHi = hi + pad;
+  }
+  const xPx = x => L + (x - r0) / (r1 - r0) * pw;
+  const yPx = v => T + (1 - (v - yLo) / (yHi - yLo)) * ph;
+  fvChart.geo = { l: L, t: T, w: pw, h: ph, r0, r1 };
+
+  // ---- grid + axis labels ----
+  ctx.font = font;
+  ctx.lineWidth = 1;
+  const yStep = niceStep(yHi - yLo, Math.max(2, Math.floor(ph / 34)));
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  const yDec = yStep >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log10(yStep)));
+  for (let v = Math.ceil(yLo / yStep) * yStep; v <= yHi + 1e-9; v += yStep) {
+    const y = Math.round(yPx(v)) + 0.5;
+    const isZero = m.zeroLine && Math.abs(v) < yStep * 1e-6;
+    ctx.strokeStyle = isZero ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.07)';
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke();
+    ctx.fillStyle = '#9aa3b2';
+    ctx.fillText((Math.abs(v) < yStep * 1e-6 ? 0 : v).toFixed(yDec), L - 6, y);
+  }
+  // Time ticks on round clock values; seconds only when they matter.
+  const minGap = compact ? 58 : 76;
+  let tStep = CHART_TIME_STEPS[CHART_TIME_STEPS.length - 1];
+  for (const s of CHART_TIME_STEPS) {
+    if ((s / (r1 - r0)) * pw >= minGap) { tStep = s; break; }
+  }
+  const withSec = tStep < 60000;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let t = Math.ceil(r0 / tStep) * tStep; t <= r1; t += tStep) {
+    const x = Math.round(xPx(t)) + 0.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + ph); ctx.stroke();
+    if (x > L + 14 && x < L + pw - 14) {
+      ctx.fillStyle = '#9aa3b2';
+      ctx.fillText(chartFmtClock(t, withSec), x, T + ph + 6);
+    }
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+  ctx.strokeRect(L + 0.5, T + 0.5, pw - 1, ph - 1);
+  // y-axis title, rotated.
+  if (m.yTitle && !compact) {
+    ctx.save();
+    ctx.translate(11, T + ph / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText(m.yTitle, 0, 0);
+    ctx.restore();
+  }
+
+  // ---- series ----
+  ctx.save();
+  ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+  const decimate = (i1 - i0) > pw * 3;
+  // Later series are drawn first so the primary line stays on top.
+  for (let si = m.series.length - 1; si >= 0; si--) {
+    const s = m.series[si];
+    const runs = [];           // [[x,y], ...] per gap-free run
+    let run = null;
+    const push = (x, y) => { if (!run) { run = []; runs.push(run); } run.push(x, y); };
+    if (!decimate) {
+      for (let i = i0; i <= i1; i++) {
+        const v = s.y[i];
+        if (v == null || !(v === v)) { run = null; continue; }
+        push(xPx(m.xs[i]), yPx(v));
+      }
+    } else {
+      // One pixel column -> first / min / max / last, which preserves
+      // every spike a full-resolution polyline would have shown.
+      let col = -1, first = 0, last = 0, lo = 0, hi = 0, has = false;
+      const flush = () => {
+        if (!has) return;
+        const x = L + col + 0.5;
+        push(x, first);
+        if (lo !== first) push(x, lo);
+        if (hi !== lo) push(x, hi);
+        if (last !== hi) push(x, last);
+        has = false;
+      };
+      for (let i = i0; i <= i1; i++) {
+        const v = s.y[i];
+        if (v == null || !(v === v)) { flush(); run = null; col = -1; continue; }
+        const cx = Math.floor(xPx(m.xs[i]) - L);
+        const y = yPx(v);
+        if (cx !== col) { flush(); col = cx; first = lo = hi = last = y; has = true; }
+        else { last = y; if (y < lo) lo = y; if (y > hi) hi = y; }
+      }
+      flush();
+    }
+    for (const r of runs) {
+      if (r.length < 4) continue;
+      if (s.fill) {
+        ctx.beginPath();
+        ctx.moveTo(r[0], T + ph);
+        for (let k = 0; k < r.length; k += 2) ctx.lineTo(r[k], r[k + 1]);
+        ctx.lineTo(r[r.length - 2], T + ph);
+        ctx.closePath();
+        ctx.fillStyle = s.fill; ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.moveTo(r[0], r[1]);
+      for (let k = 2; k < r.length; k += 2) ctx.lineTo(r[k], r[k + 1]);
+      ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.5;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // ---- legend (top margin, right-aligned: never over the data) ----
+  if (legend) {
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
+    let x = L + pw;
+    for (let si = m.series.length - 1; si >= 0; si--) {
+      const s = m.series[si];
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText(s.name, x, 11);
+      x -= ctx.measureText(s.name).width + 5;
+      ctx.strokeStyle = s.color; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x - 14, 11.5); ctx.lineTo(x, 11.5); ctx.stroke();
+      x -= 26;
+    }
+  }
+
+  // ---- hover read-out ----
+  const hx = fvChart.hoverX;
+  if (hx != null && hx >= L && hx <= L + pw) {
+    const xv = r0 + (hx - L) / pw * (r1 - r0);
+    let i = chartLowerBound(m.xs, xv);
+    if (i > 0 && (i >= m.xs.length || xv - m.xs[i - 1] < m.xs[i] - xv)) i--;
+    const px = Math.round(xPx(m.xs[i])) + 0.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px, T); ctx.lineTo(px, T + ph); ctx.stroke();
+    const parts = [chartFmtClock(m.xs[i], true)];
+    for (const s of m.series) {
+      const v = s.y[i];
+      if (v == null || !(v === v)) continue;
+      ctx.fillStyle = s.color;
+      ctx.beginPath(); ctx.arc(px, yPx(v), 3, 0, Math.PI * 2); ctx.fill();
+      parts.push((m.series.length > 1 ? s.name + ' ' : '')
+        + v.toFixed(s.prec) + ' ' + s.unit);
+    }
+    const text = parts.join('  ·  ');
+    ctx.font = font;
+    const tw = ctx.measureText(text).width + 14;
+    let bx = px + 8;
+    if (bx + tw > L + pw) bx = px - 8 - tw;
+    if (bx < L) bx = L;
+    const by = T + 4;
+    ctx.fillStyle = 'rgba(12,16,24,0.92)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    roundRectPath(ctx, bx, by, tw, 20, 5);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#e7eaf0';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, bx + 7, by + 10.5);
+  }
 }
 
 function refreshChart() {
@@ -5726,19 +6175,18 @@ function refreshChart() {
     ? f => (state.altSrc === 'gps' ? f.alt_gps : f.alt_baro)
     : altOf;
   const vzAt = selTr ? i => cmpSmoothedVz(fxArr, i) : i => smoothedVario(i);
-  // Times are tagged with the takeoff timezone via tShiftIso so the
-  // chart's clock matches the HUD regardless of the viewer's browser
-  // timezone.
-  const times = new Array(nPts);
+  // Launch-local "fake-UTC" ms, so the chart's clock matches the HUD
+  // regardless of the viewer's browser timezone.
+  const xs = new Float64Array(nPts);
   for (let k = 0; k < nPts; k++) {
-    times[k] = tShiftIso(toMain(selTr ? selTr.tMs[k] : tMs[k]));
+    xs[k] = tzShiftMs(toMain(selTr ? selTr.tMs[k] : tMs[k]));
   }
 
   sampleGroundAlt();   // main-track DEM; always populate
 
   const metric = state.chartMetric;
-  const traces = [];
-  let yTitle = '', yLo = null, yHi = null, showLegend = false;
+  const series = [];
+  let yTitle = '', yLo = null, yHi = null;
   const labelParts = [];
 
   if (metric === 'alt') {
@@ -5795,123 +6243,66 @@ function refreshChart() {
     yHi = Math.ceil(yHi0 + pad);
     yTitle = `Alt (${U.altLabel()})`;
 
-    traces.push({
-      x: times, y: altY, mode: 'lines', name: 'Pilot',
-      line: { color: '#60a5fa', width: 1.6 }, yaxis: 'y',
-      hovertemplate: '%{x|%H:%M:%S}<br>%{y:.1f} ' + U.altLabel() + '<extra></extra>',
-    });
-    if (groundY) traces.push({
-      x: times, y: groundY, mode: 'lines', name: 'Ground',
-      line: { color: '#a3712e', width: 1.4 }, yaxis: 'y',
-      fill: 'tozeroy',
-      fillcolor: 'rgba(163,113,46,0.22)',
-      hovertemplate: '%{x|%H:%M:%S}<br>%{y:.1f} ' + U.altLabel() + ' ground<extra></extra>',
-    });
-    showLegend = traces.length > 1;
-    labelParts.push(`Pilot alt (${state.altSrc.toUpperCase()})`);
-    if (groundY) labelParts.push('Ground alt');
+    series.push({ y: altY, name: 'Pilot', color: '#60a5fa', width: 1.6,
+                  unit: U.altLabel(), prec: 0 });
+    if (groundY) series.push({
+      y: groundY, name: 'Ground', color: '#a3712e', width: 1.4,
+      fill: 'rgba(163,113,46,0.22)', unit: U.altLabel(), prec: 0 });
+    labelParts.push(`Alt (${state.altSrc.toUpperCase()})`);
+    if (groundY) labelParts.push('Ground');
   } else if (metric === 'vario') {
     const y = new Array(nPts);
     for (let k = 0; k < nPts; k++) y[k] = U.vzConv(vzAt(k));
-    traces.push({
-      x: times, y, mode: 'lines', name: 'Vario',
-      line: { color: '#10b981', width: 1.5 }, yaxis: 'y',
-      hovertemplate: '%{x|%H:%M:%S}<br>%{y:.' + U.vzPrec() + 'f} '
-                   + U.vzLabel() + '<extra></extra>',
-    });
+    series.push({ y, name: 'Vario', color: '#10b981', width: 1.5,
+                  unit: U.vzLabel(), prec: U.vzPrec() });
     yTitle = `Vario (${U.vzLabel()})`;
-    labelParts.push('Vario (smoothed)');
+    labelParts.push('Vario');
   } else {   // 'speed'
     const y = fxArr.map(f => U.gsConv(f.gs_kmh));
-    traces.push({
-      x: times, y, mode: 'lines', name: 'Ground speed',
-      line: { color: '#f59e0b', width: 1.5 }, yaxis: 'y',
-      hovertemplate: '%{x|%H:%M:%S}<br>%{y:.1f} ' + U.gsLabel() + '<extra></extra>',
-    });
+    series.push({ y, name: 'Ground speed', color: '#f59e0b', width: 1.5,
+                  unit: U.gsLabel(), prec: 1 });
     yTitle = `Speed (${U.gsLabel()})`;
     labelParts.push('Ground speed');
   }
 
-  const yaxis = {
-    title: yTitle,
-    gridcolor: 'rgba(255,255,255,0.06)',
-    linecolor: 'rgba(255,255,255,0.15)',
-    zeroline: metric === 'vario',
-    zerolinecolor: 'rgba(255,255,255,0.25)',
-    visible: true, color: '#cbd5e1',
-    fixedrange: true,
-  };
-  if (yLo != null) { yaxis.range = [yLo, yHi]; yaxis.autorange = false; }
-
-  Plotly.react('chart', traces, {
-    margin: { l: 55, r: 20, t: 20, b: 36 },
-    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-    font: { color: '#9aa3b2', size: 11 },
-    dragmode: false,
-    xaxis: Object.assign({
-             type: 'date', tickformat: '%H:%M:%S',
-             hoverformat: '%H:%M:%S',
-             gridcolor: 'rgba(255,255,255,0.06)',
-             linecolor: 'rgba(255,255,255,0.15)', zeroline: false,
-             fixedrange: true },
-           chartXRange ? { range: chartXRange.slice(), autorange: false } : {}),
-    yaxis,
-    shapes: [],
-    showlegend: showLegend,
-    legend: { x: 0.99, y: 0.98, xanchor: 'right', yanchor: 'top',
-              bgcolor: 'rgba(0,0,0,0)',
-              font: { color: '#cbd5e1', size: 10 } },
-  }, { displayModeBar: false, responsive: true });
+  fvChart.model = { xs, series, yLo, yHi, yTitle,
+                    zeroLine: metric === 'vario' };
+  drawChart();
 
   const lbl = document.getElementById('chartLabel');
   if (selTr) labelParts.unshift(pilotLabelFor(state.chartTrack));
   labelParts.push(fmtTzLabel());
-  lbl.textContent = labelParts.join('  \u00b7  ');
+  lbl.textContent = labelParts.join(' · ');
+  lbl.title = lbl.textContent;
 }
 function syncChartCursor() {
   const cursor = document.getElementById('chartCursor');
   if (!cursor) return;
-
-  if (!chartReady || !state.showChart || N === 0) {
+  const g = fvChart.geo;
+  if (!chartReady || !state.showChart || N === 0 || !g) {
     cursor.style.display = 'none';
     return;
   }
-
-  const gd = document.getElementById('chart');
-  if (!gd) {
-    cursor.style.display = 'none';
-    return;
-  }
-
-  const fl = gd._fullLayout;
-  if (!fl || !fl.xaxis) {
-    cursor.style.display = 'none';
-    return;
-  }
-
-  const xa = fl.xaxis;
-  if (!xa._rl || !xa._length) {
-    cursor.style.display = 'none';
-    return;
-  }
-
   const i = findIdx(state.currentMs);
-  const curMsShifted = tMs[i] + tzOffsetMin * 60000;
-  const t = (curMsShifted - xa._rl[0]) / (xa._rl[1] - xa._rl[0]);
-  const pct = Math.max(0, Math.min(1, t));
-  const leftPx = (xa._offset || 0) + pct * xa._length;
-
-  cursor.style.left = leftPx + 'px';
-  // Span exactly the plot area (the old static top/bottom guesses left
-  // the line short of the axis when the panel was resized).
-  const ya = fl.yaxis;
-  if (ya && ya._length) {
-    const head = document.querySelector('#chartPanel .head');
-    const headH = head ? head.offsetHeight : 28;
-    cursor.style.top = (headH + (ya._offset || 0)) + 'px';
-    cursor.style.height = ya._length + 'px';
-    cursor.style.bottom = 'auto';
+  const cur = tzShiftMs(tMs[i]);
+  // Zoomed in and the playhead left the window: page the window along so
+  // the cursor never parks uselessly on the edge.
+  if (chartXRange && (cur < g.r0 || cur > g.r1) && fvChart.model) {
+    const xs = fvChart.model.xs;
+    const span = g.r1 - g.r0;
+    const full0 = xs[0], full1 = xs[xs.length - 1];
+    let n0 = cur - span * 0.1;
+    n0 = Math.max(full0, Math.min(full1 - span, n0));
+    chartXRange = [n0, n0 + span];
+    drawChart();
+    return syncChartCursor();
   }
+  const pct = Math.max(0, Math.min(1, (cur - g.r0) / (g.r1 - g.r0)));
+  const host = document.getElementById('chart');
+  cursor.style.left = (host.offsetLeft + g.l + pct * g.w) + 'px';
+  cursor.style.top = (host.offsetTop + g.t) + 'px';
+  cursor.style.height = g.h + 'px';
+  cursor.style.bottom = 'auto';
   cursor.style.display = 'block';
 }
 
@@ -6132,17 +6523,26 @@ function renderStatsPanel() {
     // Efficiency: this thermal's average climb as a share of the day's
     // best -- quick read on which climbs were worth stopping for.
     const bestClimb = Math.max(...thermals.map(t => t.avgClimb));
-    thList.innerHTML = thermals.map((th, idx) => {
+    thList.innerHTML =
+      `<div class="thermal thHead"><span>start</span><span>dur</span>`
+      + `<span>turns</span><span>gain ${U.altLabel()}</span>`
+      + `<span>${U.vzLabel()}</span><span>best</span></div>`
+      + thermals.map((th, idx) => {
       const pct = bestClimb > 0 ? Math.round(th.avgClimb / bestClimb * 100) : 0;
-      return `<div class="thermal" data-th="${idx}">`
+      const d = Math.round(th.durS);
+      return `<div class="thermal" data-th="${idx}" role="button" tabindex="0">`
         + `<span>${fmtLocalHMS(tMs[th.i0])}</span>`
-        + `<span>${Math.round(th.durS)} s · ${th.turns.toFixed(0)}t</span>`
-        + `<span class="gain">+${U.altConv(th.gainM).toFixed(0)} ${U.altLabel()}`
-        + ` (${(th.avgClimb >= 0 ? '+' : '')}${U.vzConv(th.avgClimb).toFixed(1)})`
-        + ` ${pct === 100 ? '★' : pct + '%'}</span>`
+        + `<span>${Math.floor(d / 60)}:${d % 60 < 10 ? '0' : ''}${d % 60}</span>`
+        + `<span>${th.turns.toFixed(0)}</span>`
+        + `<span class="gain">+${U.altConv(th.gainM).toFixed(0)}</span>`
+        + `<span class="gain">${(th.avgClimb >= 0 ? '+' : '')}${U.vzConv(th.avgClimb).toFixed(1)}</span>`
+        + `<span>${pct === 100 ? '★' : pct + '%'}</span>`
         + `</div>`;
     }).join('');
-    for (const el of thList.querySelectorAll('.thermal')) {
+    for (const el of thList.querySelectorAll('.thermal[data-th]')) {
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+      });
       el.addEventListener('click', () => {
         const th = thermals[parseInt(el.dataset.th, 10)];
         if (!th) return;
@@ -6527,6 +6927,11 @@ function setupAppUi() {
     // Director itself.
     const orbitish = state.camStyle === 'orbit' || state.camStyle === 'director';
     rowOrbitSpeed.style.display = orbitish ? '' : 'none';
+    // Director only orbits inside thermals -- say so, or the row reads
+    // like a stray Orbit-mode setting.
+    const orbLbl = document.getElementById('orbitSpeedLbl');
+    if (orbLbl) orbLbl.textContent =
+      state.camStyle === 'director' ? 'Thermal orbit' : 'Orbit speed';
     rowOrbitResume.style.display = orbitish ? '' : 'none';
     const dir = state.camStyle === 'director' ? '' : 'none';
     const sec = document.getElementById('secDirector');
@@ -6565,9 +6970,18 @@ function setupAppUi() {
         head.classList.toggle('closed', !!secState[name]);
         body.classList.toggle('closed', !!secState[name]);
       }
+      // A real, keyboard-operable disclosure button.
+      head.setAttribute('role', 'button');
+      head.tabIndex = 0;
+      head.setAttribute('aria-expanded',
+        String(!head.classList.contains('closed')));
+      head.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); head.click(); }
+      });
       head.addEventListener('click', () => {
         const closed = !head.classList.contains('closed');
         head.classList.toggle('closed', closed);
+        head.setAttribute('aria-expanded', String(!closed));
         body.classList.toggle('closed', closed);
         secState[name] = closed;
         try { localStorage.setItem('fv_secs_v1', JSON.stringify(secState)); }
@@ -7435,7 +7849,7 @@ function setupAppUi() {
   // "Reset all": every setting back to factory defaults, saved panel
   // layout cleared. Runs through each control's own change path so all
   // side effects (basemap swap, chart refresh, cache invalidation) fire.
-  document.getElementById('resetSettings').onclick = () => {
+  const doResetAll = () => {
     try {
       localStorage.removeItem(PREFS_STORAGE_KEY);
       localStorage.removeItem('fv_panels_v1');
@@ -7489,6 +7903,7 @@ function setupAppUi() {
     applySpeedByIndex(speedToIndex(FACTORY_STATE.speed));
     state.pilotLabel = FACTORY_STATE.pilotLabel;
     state.showHud = FACTORY_STATE.showHud; updateHudVisibility();
+    state.hudCompact = FACTORY_STATE.hudCompact; applyHudCompact();
     state.showChart = FACTORY_STATE.showChart; updateChartPanel();
     for (const id of ['hud', 'statsPanel', 'chartPanel', 'bottomBar']) {
       const p = document.getElementById(id);
@@ -7500,14 +7915,17 @@ function setupAppUi() {
     for (const head of settingsEl.querySelectorAll('.sec')) {
       const name = head.dataset.sec;
       const body = settingsEl.querySelector(`[data-secbody="${name}"]`);
-      const closed = !['basics', 'display', 'pilot'].includes(name);
+      const closed = !['basics', 'camera', 'playback'].includes(name);
       head.classList.toggle('closed', closed);
+      head.setAttribute('aria-expanded', String(!closed));
       if (body) body.classList.toggle('closed', closed);
     }
     buildProgressTicks();
     renderDirty = true;
     showStatus('All settings reset to defaults');
   };
+  // One stray click used to wipe every preference and the panel layout.
+  armConfirm(document.getElementById('resetSettings'), doResetAll, 'Reset everything?');
 
   document.getElementById('centerStart').onclick = centerStart;
   document.getElementById('fitTrack2').onclick   = () => fitTrack();
@@ -7741,6 +8159,18 @@ function setupAppUi() {
     clearTimeout(resolveTimer);
     resolveTimer = setTimeout(resolvePanelOverlaps, 250);
   });
+  // The stats panel fills in after it opens (thermals, wind bands, a new
+  // flight with five times the thermals) and the HUD changes height with
+  // compact mode -- a resolver that only ran on open left the grown panel
+  // sitting on top of the chart. Re-run whenever either changes size.
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => {
+      clearTimeout(resolveTimer);
+      resolveTimer = setTimeout(resolvePanelOverlaps, 160);
+    });
+    ro.observe(document.getElementById('statsPanel'));
+    ro.observe(document.getElementById('hud'));
+  }
 
   // Register drag handlers:
   // HUD is always draggable on all screens (mobile and desktop)
@@ -7824,13 +8254,14 @@ function setupAppUi() {
     }
   });
 
-  // Plotly chart auto-resizing (+ remember the user-chosen panel size)
+  // Chart auto-resizing (+ remember the user-chosen panel size)
   if (window.ResizeObserver) {
     let sizeSaveTimer = null;
     new ResizeObserver(() => {
       const el = document.getElementById('chart');
-      if (el && window.Plotly && el.offsetWidth > 0 && el.offsetHeight > 0) {
-        Plotly.Plots.resize(el);
+      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+        drawChart();
+        syncChartCursor();
       }
       if (window.innerWidth > 768) {
         clearTimeout(sizeSaveTimer);
@@ -8003,7 +8434,7 @@ function setupAppUi() {
     toggleChartBtn.classList.toggle('active', open);
     if (open) {
       refreshChart();
-      setTimeout(() => Plotly.Plots.resize('chart'), 300);
+      setTimeout(() => { drawChart(); syncChartCursor(); }, 300);
       // Panel slides in over 280 ms; untangle overlaps once it lands.
       setTimeout(() => {
         if (window._resolvePanelOverlaps) window._resolvePanelOverlaps();
@@ -8050,6 +8481,34 @@ function setupAppUi() {
     state.showHud = false;
     updateHudVisibility();
   };
+  // Compact read-out (altitude / AGL / speed / vario). 'auto' follows the
+  // screen: phones start compact so the HUD does not cover a quarter of
+  // the map; an explicit click sticks.
+  const hudCompactBtn = document.getElementById('hudCompactBtn');
+  function hudIsCompact() {
+    if (state.hudCompact === 'on') return true;
+    if (state.hudCompact === 'off') return false;
+    return window.innerWidth <= 480 || window.innerHeight <= 520;
+  }
+  function applyHudCompact() {
+    const c = hudIsCompact();
+    hudPanel.classList.toggle('compact', c);
+    // A drag pins the panel's pixel height; release it so the box can
+    // follow its new content.
+    hudPanel.style.height = '';
+    if (c) hudPanel.style.width = '';
+    hudCompactBtn.innerHTML = c ? '&#x25BE;' : '&#x25B4;';
+    hudCompactBtn.setAttribute('aria-expanded', String(!c));
+    hudCompactBtn.title = c ? 'Show all values' : 'Compact read-out';
+  }
+  hudCompactBtn.onclick = () => {
+    state.hudCompact = hudIsCompact() ? 'off' : 'on';
+    applyHudCompact();
+  };
+  window.addEventListener('resize', () => {
+    if (state.hudCompact === 'auto') applyHudCompact();
+  });
+  applyHudCompact();
   if (toggleHudBtn) {
     toggleHudBtn.onclick = () => {
       state.showHud = !state.showHud;
@@ -8072,9 +8531,11 @@ function setupAppUi() {
   const toggleFutureBtn = document.getElementById('toggleFuture');
   function updateFutureBtn() {
     toggleFutureBtn.classList.toggle('active', state.showFuture);
-    toggleFutureBtn.title = state.showFuture
-      ? 'Return to flown-only view'
-      : 'Show full track (disable fade)';
+    const tip = state.showFuture
+      ? 'Back to flown-only view'
+      : 'Show whole track';
+    toggleFutureBtn.dataset.tip = tip;
+    toggleFutureBtn.setAttribute('aria-label', tip);
   }
   // On: the whole track is drawn AND framed on one screen -- follow is
   // paused so the camera doesn't snap back to the pilot. Off: follow
@@ -8094,27 +8555,15 @@ function setupAppUi() {
   };
   updateFutureBtn();
 
-  // Click anywhere in chart to seek.
-  //
-  // We avoid xa.p2c() because whether it expects gd-relative or
-  // plot-area-relative pixels has changed across Plotly versions, and
-  // getting it wrong shifts the seek by ~one y-axis-margin width (often
-  // many minutes of flight time). Instead, compute the data value
-  // directly from the documented internal fields: xa._offset (plot-area
-  // left in gd-relative px), xa._length (plot-area width in px), and
-  // xa._rl (range in linear coords -- ms since epoch for a date axis,
-  // which is what seekToMs expects).
+  // Click anywhere in chart to seek: map the pointer through the plot
+  // rect the chart last drew (fvChart.geo) back to a time.
   function handleChartSeek(clientX) {
+    const g = fvChart.geo;
+    if (!g) return;
     const gd = document.getElementById('chart');
-    const fl = gd._fullLayout;
-    if (!fl || !fl.xaxis) return;
-    const xa = fl.xaxis;
-    if (!xa._rl || !xa._length) return;
     const gdRect = gd.getBoundingClientRect();
-    const pxInPlot = clientX - gdRect.left - (xa._offset || 0);
-    const px = Math.max(0, Math.min(xa._length, pxInPlot));
-    const t = px / xa._length;
-    const msShifted = xa._rl[0] + t * (xa._rl[1] - xa._rl[0]);
+    const px = Math.max(0, Math.min(g.w, clientX - gdRect.left - g.l));
+    const msShifted = g.r0 + (px / g.w) * (g.r1 - g.r0);
     if (!isFinite(msShifted)) return;
     // The x-axis stores "fake-UTC" ms representing launch local time;
     // convert it back to true epoch ms before seeking.
@@ -8130,33 +8579,27 @@ function setupAppUi() {
   // they read the live axis range.
   chartEl.addEventListener('wheel', e => {
     if (N === 0) return;
-    const gd = document.getElementById('chart');
-    const fl2 = gd._fullLayout;
-    if (!fl2 || !fl2.xaxis || !fl2.xaxis._rl || !fl2.xaxis._length) return;
+    const g = fvChart.geo;
+    if (!g) return;
     e.preventDefault();
     e.stopPropagation();
-    const xa = fl2.xaxis;
-    const rect = gd.getBoundingClientRect();
-    const frac = Math.max(0, Math.min(1,
-      (e.clientX - rect.left - (xa._offset || 0)) / xa._length));
+    const rect = chartEl.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (e.clientX - rect.left - g.l) / g.w));
     if (Math.abs(e.deltaY) < 0.5) return;   // horizontal trackpad scroll
-    const [r0, r1] = xa._rl;
+    const r0 = g.r0, r1 = g.r1;
     const full0 = tzShiftMs(T0), full1 = tzShiftMs(T1);
     const factor = e.deltaY < 0 ? 0.75 : 1 / 0.75;
-    let span = Math.max(15000, Math.min((r1 - r0) * factor, full1 - full0));
+    const span = Math.max(15000, Math.min((r1 - r0) * factor, full1 - full0));
     const center = r0 + frac * (r1 - r0);
     let n0 = center - frac * span;
     n0 = Math.max(full0, Math.min(full1 - span, n0));
     if (!isFinite(n0) || !isFinite(span)) return;
-    // Plotly date axes want ISO strings -- numeric ms silently degrades
-    // the axis and blanks the traces.
-    chartXRange = span >= (full1 - full0) * 0.999
-      ? null
-      : [new Date(n0).toISOString(), new Date(n0 + span).toISOString()];
-    refreshChart();
+    chartXRange = span >= (full1 - full0) * 0.999 ? null : [n0, n0 + span];
+    drawChart();
+    syncChartCursor();
   }, { passive: false });
   chartEl.addEventListener('dblclick', () => {
-    if (chartXRange) { chartXRange = null; refreshChart(); }
+    if (chartXRange) { chartXRange = null; drawChart(); syncChartCursor(); }
   });
 
   // iOS re-dispatches a compatibility mouse sequence (mousedown/mouseup/
@@ -8246,7 +8689,14 @@ function setupAppUi() {
 
   // Help overlay
   const helpOverlay = document.getElementById('helpOverlay');
-  function setHelp(open) { helpOverlay.classList.toggle('hidden', !open); }
+  function setHelp(open) {
+    if (open) {
+      const rot = 'Rotate / tilt the 3D view', pan = 'Pan the map';
+      document.getElementById('helpDragL').textContent = state.swapButtons ? pan : rot;
+      document.getElementById('helpDragR').textContent = state.swapButtons ? rot : pan;
+    }
+    helpOverlay.classList.toggle('hidden', !open);
+  }
   helpOverlay.addEventListener('click', () => setHelp(false));
 
   // Seek relative to the current position and repaint immediately so the
@@ -8329,6 +8779,134 @@ function setupAppUi() {
   wireExportUi();
   wireOfflineUi();
   wireSitesUi();
+  wireA11y();
+
+  // Touch screens have no hover, so the icon-only tool buttons never get
+  // to show their tooltip: name the tool in the status pill on tap.
+  // Capture phase, so a handler's own message (e.g. "Screenshot saved")
+  // still wins.
+  if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
+    document.getElementById('grpTools').addEventListener('click', e => {
+      const b = e.target.closest('.tbtn[data-tip]');
+      if (b) showStatus(b.dataset.tip.replace(/\s*\([^)]*\)\s*$/, ''));
+    }, { capture: true });
+  }
+}
+
+// Accessible names / states for controls that are visually self-evident
+// but otherwise anonymous to assistive tech: icon buttons, the settings
+// rows (label text lives in a sibling span), and pressed state for every
+// toggle. One observer keeps aria-pressed in sync with the .active class
+// the rest of the code already maintains.
+function wireA11y() {
+  for (const b of document.querySelectorAll('button[title]:not([aria-label])')) {
+    if (b.textContent.trim().length <= 1) b.setAttribute('aria-label', b.title);
+  }
+  for (const row of document.querySelectorAll('#settings .row')) {
+    const lbl = row.querySelector('.lbl');
+    if (!lbl) continue;
+    const name = lbl.textContent.trim();
+    const ctls = row.querySelectorAll('input, select');
+    for (const c of ctls) {
+      if (!c.getAttribute('aria-label')) {
+        c.setAttribute('aria-label',
+          ctls.length > 1 && c.title ? `${name}: ${c.title}` : name);
+      }
+    }
+    const tg = row.querySelector('.toggle');
+    if (tg) { tg.setAttribute('role', 'group'); tg.setAttribute('aria-label', name); }
+  }
+  const prog = document.getElementById('progress');
+  if (prog) prog.setAttribute('aria-label', 'Flight timeline');
+  const sp = document.getElementById('speedSlider');
+  if (sp) sp.setAttribute('aria-label', 'Playback speed');
+  const pressable = '.tbtn, .toggle > button, .maplibregl-ctrl-group button';
+  const sync = el => {
+    if (el.matches && el.matches(pressable)) {
+      el.setAttribute('aria-pressed', String(el.classList.contains('active')));
+    }
+  };
+  for (const el of document.querySelectorAll(pressable)) sync(el);
+  if (window.MutationObserver) {
+    new MutationObserver(muts => { for (const m of muts) sync(m.target); })
+      .observe(document.body,
+        { subtree: true, attributes: true, attributeFilter: ['class'] });
+  }
+}
+
+// Two-step confirm for destructive buttons: first click arms (red, with
+// `label`), a second click within 3 s runs `fn`; otherwise it disarms.
+function armConfirm(btn, fn, label) {
+  if (!btn) return;
+  let t = null;
+  const orig = btn.innerHTML;
+  const disarm = () => {
+    clearTimeout(t); t = null;
+    btn.innerHTML = orig; btn.classList.remove('btn-armed');
+  };
+  btn.onclick = () => {
+    if (t) { disarm(); fn(); return; }
+    btn.textContent = label || 'Sure?';
+    btn.classList.add('btn-armed');
+    t = setTimeout(disarm, 3000);
+  };
+}
+
+// In-app replacement for window.prompt. Resolves with the trimmed text,
+// or null when cancelled (Esc, Cancel, click outside).
+function askText(title, value, placeholder) {
+  return new Promise(resolve => {
+    const ov = document.getElementById('askOverlay');
+    const form = document.getElementById('askCard');
+    const inp = document.getElementById('askInput');
+    document.getElementById('askTitle').textContent = title;
+    inp.value = value || '';
+    inp.placeholder = placeholder || '';
+    ov.classList.remove('hidden');
+    const done = v => {
+      ov.classList.add('hidden');
+      form.onsubmit = null; ov.onpointerdown = null; inp.onkeydown = null;
+      document.getElementById('askCancel').onclick = null;
+      resolve(v);
+    };
+    form.onsubmit = e => { e.preventDefault(); done(inp.value.trim() || null); };
+    document.getElementById('askCancel').onclick = () => done(null);
+    ov.onpointerdown = e => { if (e.target === ov) done(null); };
+    inp.onkeydown = e => {
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      e.stopPropagation();      // typing must not trigger app shortcuts
+    };
+    setTimeout(() => { inp.focus(); inp.select(); }, 30);
+  });
+}
+
+// First-run hint: the 3-D view rotates on left-drag (the opposite of most
+// web maps), which nobody discovers from a tooltip. Shown once per
+// browser on the first loaded flight; never in Explore mode.
+function maybeShowFirstRunTip() {
+  let seen = false;
+  try { seen = !!localStorage.getItem('fv_tip_seen_v1'); } catch (_) {}
+  if (seen) return;
+  const card = document.getElementById('tipCard');
+  const text = document.getElementById('tipText');
+  if (!card || !text) return;
+  const touch = window.matchMedia
+    && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+  text.innerHTML = touch
+    ? '<b>Drag</b> to look around &middot; <b>pinch</b> to zoom &middot; '
+      + '<b>tap</b> the map to bring the controls back while playing'
+    : (state.swapButtons
+        ? '<b>Drag</b> pans &middot; <b>right-drag</b> rotates'
+        : '<b>Drag</b> rotates the 3D view &middot; <b>right-drag</b> pans')
+      + ' &middot; <b>scroll</b> zooms &middot; <kbd>Space</kbd> play / pause'
+      + ' &middot; <kbd>?</kbd> all shortcuts';
+  const close = () => {
+    card.classList.add('hidden');
+    try { localStorage.setItem('fv_tip_seen_v1', '1'); } catch (_) {}
+  };
+  document.getElementById('tipClose').onclick = close;
+  setTimeout(() => card.classList.remove('hidden'), 1800);
+  setTimeout(close, 20000);
 }
 
 // ============================================================================
@@ -9107,7 +9685,6 @@ function missingLibs() {
   const out = [];
   if (typeof maplibregl === 'undefined') out.push('MapLibre');
   if (typeof deck === 'undefined') out.push('deck.gl');
-  if (typeof Plotly === 'undefined') out.push('Plotly');
   return out;
 }
 
@@ -9213,6 +9790,7 @@ function loadFlight(newFixes, filename, opts) {
   // Init map on first load, hook up app UI
   initMap();
   setupAppUi();
+  maybeShowFirstRunTip();
   state.chartTrack = -1;      // chart shows the (possibly new) main flight
   chartXRange = null;         // reset any chart zoom
   loopAMs = 0; loopBMs = 0;   // A-B loop belongs to the previous flight
@@ -10422,40 +11000,17 @@ async function saveMediaBlob(blob, filename) {
 // while recording we redraw map + Live HUD + chart into an offscreen
 // canvas on every map render and record THAT canvas. The HUD is cheap to
 // redraw with 2D text (its values change every frame); the chart is
-// rasterised via Plotly.toImage on a slow interval and blitted from
-// cache, with the red time cursor drawn on top each frame. Other UI
+// already a canvas, so it is blitted directly, with the red time cursor
+// drawn on top each frame. Other UI
 // (buttons, sliders, settings) is deliberately excluded.
 // ---------------------------------------------------------------------------
 const recComp = {
-  canvas: null, ctx: null, chartImg: null,
-  chartTimer: null, chartBusy: false, renderHandler: null,
+  canvas: null, ctx: null, renderHandler: null,
 };
 
 function roundRectPath(ctx, x, y, w, h, r) {
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); return; }
   ctx.beginPath(); ctx.rect(x, y, w, h);   // ancient-browser fallback
-}
-
-async function refreshChartSnapshot() {
-  if (!state.showChart || !chartReady || recComp.chartBusy) {
-    if (!state.showChart) recComp.chartImg = null;
-    return;
-  }
-  const gd = document.getElementById('chart');
-  if (!gd || !gd.offsetWidth || !gd.offsetHeight) { recComp.chartImg = null; return; }
-  recComp.chartBusy = true;
-  try {
-    const url = await Plotly.toImage(gd, {
-      format: 'png', width: gd.offsetWidth, height: gd.offsetHeight,
-      scale: window.devicePixelRatio || 1,
-    });
-    const img = new Image();
-    await new Promise((res, rej) => {
-      img.onload = res; img.onerror = rej; img.src = url;
-    });
-    recComp.chartImg = img;
-  } catch (_) { /* keep the previous snapshot */ }
-  finally { recComp.chartBusy = false; }
 }
 
 function drawHudOverlay(ctx, dpr, mapRect) {
@@ -10489,7 +11044,7 @@ function drawHudOverlay(ctx, dpr, mapRect) {
   for (const row of hud.querySelectorAll('.body .row2')) {
     const rr = row.getBoundingClientRect();
     const k = row.querySelector('.k'), v = row.querySelector('.v');
-    if (!k || !v) continue;
+    if (!k || !v || !rr.height) continue;   // rows hidden by compact mode
     const yy = (rr.top - mapRect.top + rr.height / 2) * dpr;
     ctx.textBaseline = 'middle';
     ctx.font = `${12 * dpr}px ui-monospace, Menlo, monospace`;
@@ -10528,9 +11083,9 @@ function drawChartOverlay(ctx, dpr, mapRect) {
     ctx.fillText(lbl.textContent.toUpperCase(),
       (rl.left - mapRect.left) * dpr, (rl.top - mapRect.top + rl.height / 2) * dpr);
   }
-  if (recComp.chartImg) {
+  if (fvChart.canvas && fvChart.canvas.width > 0) {
     const rg = gd.getBoundingClientRect();
-    ctx.drawImage(recComp.chartImg,
+    ctx.drawImage(fvChart.canvas,
       (rg.left - mapRect.left) * dpr, (rg.top - mapRect.top) * dpr,
       rg.width * dpr, rg.height * dpr);
   }
@@ -10580,20 +11135,15 @@ function startComposite() {
   recComp.ctx = recComp.canvas.getContext('2d');
   recComp.renderHandler = () => drawCompositeFrame();
   map.on('render', recComp.renderHandler);
-  refreshChartSnapshot();
-  recComp.chartTimer = setInterval(refreshChartSnapshot, 600);
   drawCompositeFrame();
   return recComp.canvas;
 }
 
 function stopComposite() {
   if (recComp.renderHandler && map) map.off('render', recComp.renderHandler);
-  clearInterval(recComp.chartTimer);
   recComp.renderHandler = null;
-  recComp.chartTimer = null;
   recComp.ctx = null;
   recComp.canvas = null;
-  recComp.chartImg = null;
 }
 
 // H.264 first: QuickTime / stock iOS players cannot decode VP8/VP9, so an

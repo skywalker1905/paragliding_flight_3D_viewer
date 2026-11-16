@@ -53,14 +53,13 @@ around:
 |----------|--------|---------|
 | MapLibre GL JS 4.7 | `unpkg.com` | Map rendering engine |
 | deck.gl 9.0 | `unpkg.com` | Track / pilot overlays, interleaved with MapLibre |
-| Plotly 2.35 | `cdn.plot.ly` | Altitude / ground chart |
 | `tz-lookup` 6.1 | `unpkg.com` | Coord → IANA timezone (used for DST-correct local time) |
 | World Imagery (satellite basemap) | `services.arcgisonline.com` (Esri) | Visible map tiles |
 | OpenStreetMap (street basemap) | `tile.openstreetmap.org` | Alternative map tiles |
 | Terrarium DEM (3-D terrain + chart's ground line) | `s3.amazonaws.com/elevation-tiles-prod/terrarium/` (Mapzen / AWS Open Data, CC0) | Elevation, sampled directly at zoom 14 (~10 m / pixel) for ridge-accurate ground-altitude readouts |
 | Thermal & skyways heatmaps | `thermal.kk7.ch` (CC-BY-NC-SA) | Optional thermal-probability / flight-density overlay |
 | openAIP airspace tiles | `api.tiles.openaip.net` | Optional worldwide airspace overlay (needs a free API key) |
-| Label glyphs | `demotiles.maplibre.org` | Fonts for the launch / landing site labels |
+| Place-name labels + glyphs | `tiles.openfreemap.org` | Map labels (towns, peaks, lakes) and the fonts for site labels |
 | Reverse geocoding | `nominatim.openstreetmap.org` | Names offline-map packs after their region (falls back to coordinates) |
 
 If you open the viewer with no internet access, the map area will be blank
@@ -69,6 +68,11 @@ playback, the HUD, and the spline geometry still work because they're
 computed from the loaded `.igc` / `.gpx` / `.kml` alone. Timezone display
 falls back to a longitude-only UTC offset (no DST) when `tz-lookup`
 cannot load.
+
+The three libraries are version-pinned and loaded with **Subresource
+Integrity** hashes, so a tampered CDN file is refused by the browser. The
+chart is drawn by the viewer itself (plain 2-D canvas) — there is no
+charting library to download.
 
 To replay a specific flight with **no network at all**, pre-download its
 map with settings → **Offline map** while online and load the resulting
@@ -221,8 +225,14 @@ cached them or have been opened online at least once.
   longitude-only UTC offset when `tz-lookup` is unavailable.
 - Click to seek, or **press and drag** (mouse or touch) to scrub
   continuously; the cursor line shows the current playback time.
+- **Hover read-out**: a crosshair with the clock time and the exact
+  value(s) under the pointer.
 - **Mouse-wheel zooms the time axis** around the cursor (double-click
-  resets to the full flight).
+  resets to the full flight). While zoomed, the window pages along with
+  the playhead, and the vario / speed axes rescale to the visible stretch.
+- Self-drawn on a canvas (no charting library): a 6-hour, 22 000-fix
+  flight redraws in well under a millisecond, and the legend sits in the
+  top margin so it never covers the curve.
 - In multi-track mode a pilot toggle in the header switches whose data
   the chart shows.
 - Draggable header, resizable corner (grip shown bottom-right).
@@ -256,6 +266,9 @@ cached them or have been opened online at least once.
   pilot), ground speed, vario, **glide ratio (L/D)**, **wind estimate**,
   cumulative distance.
 - Draggable anywhere on screen.
+- **Compact mode** (▴ / ▾ in the HUD header): just altitude, AGL, ground
+  speed and vario. Phones start compact automatically; your explicit
+  choice is remembered.
 
 ### Playback
 - Play / pause with `Space`, restart, scrub via the timeline; hovering
@@ -341,9 +354,12 @@ cached them or have been opened online at least once.
   only). Camera button in the transport bar, or settings → Export.
   Filenames carry a timestamp so repeated captures never collide.
 - **Record video**: red-dot button in the transport bar (pulses while
-  recording), click again to stop and save. The recording composites the
-  3-D map **plus the Live HUD and the chart** whenever they're open —
-  transport buttons, sliders and settings are excluded. H.264 MP4 is
+  recording), click again to stop and save. With **Record all panels**
+  on (settings → Export & share, the default) it captures the page exactly
+  as you see it through the browser's screen-capture picker (choose *This
+  Tab*). With it off, no prompt appears and the recording composites the
+  clean 3-D map **plus the Live HUD and the chart** whenever they're open
+  — transport buttons, sliders and settings are excluded. H.264 MP4 is
   preferred so files open in QuickTime / stock players; browsers that
   can only encode VP8/VP9 fall back to `.webm` (open those with VLC).
   Hidden where unsupported.
@@ -379,12 +395,13 @@ cached them or have been opened online at least once.
 
 ### Settings drawer
 Collapsible sections (open/closed state remembered):
-- **Basics** — altitude source (GPS / baro), basemap, units, follow
-  pilot, camera style (Director / Center / Chase / Orbit) with orbit
-  speed / resume, start at takeoff, swap L/R mouse, Takeoff / Fit camera
-  shortcuts.
+- **Basics** — units, altitude source (GPS / baro), basemap, map labels,
+  swap L/R mouse (hidden on touch-only devices).
+- **Camera** — follow pilot, camera style (Center / Chase / Orbit /
+  Director) with orbit speed / resume, Takeoff / Fit track shortcuts.
 - **Director camera** (shown while Director is selected) — per-phase
   distance + tilt, intro / finale lengths, and timeline shots.
+- **Playback** — start at takeoff, A–B loop.
 - **Track & display** — terrain exaggeration, Alt offset (slider +
   numeric box + **Auto** DEM alignment), track width, 3-D thickness,
   smoothing subdivisions, rounding, KML sample rate.
@@ -393,6 +410,8 @@ Collapsible sections (open/closed state remembered):
 - **Trail & pilot** — track & curtain fade (switch + hold + fade each),
   track curtain, colour mode + max climb / sink, pilot shape / size,
   altitude line, XC triangle.
+
+Basics, Camera and Playback start open; the rest start collapsed.
 - **Comparison tracks**, **Airspace** (+ openAIP key), **Thermal map
   (kk7)**, **Launch & landing sites**, **Offline map**, **Export &
   share** — see above.
@@ -401,11 +420,27 @@ Universal slider ergonomics: double-click / double-tap any slider to
 reset it to its default; mouse-wheel nudges by `step` (Shift = ×10,
 Ctrl = ×100). Click outside the drawer to close it. A **Reset all**
 button in the drawer header restores every setting (and the saved
-panel layout) to factory defaults.
+panel layout) to factory defaults. Destructive buttons (Reset all,
+delete site, forget offline map, clear tile cache) ask for a second
+click within 3 seconds before they act.
 
 Floating panels (HUD, stats, chart) automatically move out of each
-other's way and snap to screen edges / neighbouring panels when
-dragged close.
+other's way — also when a panel grows after opening, e.g. the stats
+panel filling in for a long flight — and snap to screen edges /
+neighbouring panels when dragged close.
+
+The transport bar groups its tools as **file | panels (HUD, chart,
+stats) | whole-track view | capture**; hovering an icon shows its name
+instantly, and on touch screens tapping one names it in the status pill.
+A one-time hint on the first loaded flight explains the mouse / touch
+controls.
+
+### Accessibility
+- Every control is reachable and operable from the keyboard, with a
+  visible focus ring; settings sections are real disclosure buttons.
+- Icon buttons, sliders and toggles carry accessible names and pressed /
+  expanded state for screen readers.
+- `prefers-reduced-motion` is respected.
 
 ### Persistence
 - All preferences (units, basemap, colours, speed, chart state, camera
@@ -443,7 +478,7 @@ dragged close.
 | `S` | Toggle the settings drawer |
 | `I` | Toggle the flight-stats panel |
 | `L` | Toggle the live HUD |
-| `?` | Keyboard-shortcut overlay |
+| `?` | Controls & keyboard-shortcut overlay |
 | `Esc` | Close overlay / settings / stats, exit fullscreen |
 
 ## Supported file formats
@@ -485,14 +520,14 @@ touch scrubbing, auto-hiding controls, wake lock).
 
 - Map rendering: [MapLibre GL JS](https://maplibre.org/) (BSD 3-Clause)
 - Overlays: [deck.gl](https://deck.gl/) (MIT)
-- Charts: [Plotly.js](https://plotly.com/javascript/) (MIT)
 - Timezone lookup: [tz-lookup](https://github.com/darkskyapp/tz-lookup-oss) (CC0, archived 2020; viewer loads v6.1.25 from `unpkg.com`)
 - Satellite basemap: © Esri World Imagery
 - Street basemap: © OpenStreetMap contributors
 - Terrain DEM: Mapzen / AWS Open Data Terrarium tiles (CC0)
 - Thermal & skyways heatmaps: © [thermal.kk7.ch](https://thermal.kk7.ch) (CC-BY-NC-SA)
 - Airspace tiles: © [openAIP](https://www.openaip.net) (free API key required)
-- Site-label glyphs & reverse geocoding: MapLibre demo fonts / © OpenStreetMap Nominatim
+- Place-name labels & glyphs: [OpenFreeMap](https://openfreemap.org) (© OpenStreetMap contributors)
+- Reverse geocoding: © OpenStreetMap Nominatim
 
 ## License
 
